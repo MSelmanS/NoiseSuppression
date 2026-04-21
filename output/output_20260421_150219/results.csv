@@ -1,0 +1,8 @@
+model,load_time_s,process_time_s,audio_duration_s,rtf,ram_load_mb,ram_process_mb,model_size_mb,param_count
+spectral_subtraction,0.0,0.042,10.0,0.004,0.0,1.7,0.0,0
+rnnoise,0.457,1.798,10.0,0.18,16.4,22.2,0.0,0
+deepfilternet,0.182,0.442,10.0,0.044,21.8,118.5,8.15,2135484
+demucs_dns48,0.18,0.982,10.0,0.098,53.5,229.7,71.98,18867937
+demucs_dns64,21.9,2.882,10.0,0.288,-54.2,256.6,127.92,33533569
+demucs_master64,19.25,0.819,10.0,0.082,-213.0,220.0,127.92,33533569
+metricgan_plus,0.918,0.192,10.0,0.019,-530.9,10.1,7.23,1895514
