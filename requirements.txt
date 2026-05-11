@@ -1,0 +1,32 @@
+# Noise Suppression project — pinned to versions verified on Python 3.11.9 (Windows).
+
+# Core scientific stack
+numpy==1.26.4
+scipy==1.17.1
+pandas==3.0.2
+openpyxl==3.1.5
+matplotlib==3.10.8
+psutil==7.2.2
+
+# Audio I/O
+soundfile==0.13.1
+sounddevice==0.5.5
+
+# PyTorch (CPU build is fine; install a CUDA build manually if you want GPU)
+torch==2.3.1
+torchaudio==2.3.1
+
+# Denoising models
+pyrnnoise==0.4.3
+DeepFilterNet==0.5.6
+DeepFilterLib==0.5.6
+denoiser==0.1.5
+speechbrain==0.5.16
+
+# SpeechBrain transitive deps that are easy to miss
+HyperPyYAML==1.2.3
+huggingface-hub==0.19.4
+
+# Benchmark output / utility
+pystoi==0.4.1
+tqdm==4.67.3

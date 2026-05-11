@@ -34,6 +34,7 @@ MODELS = [
     MetricGANDenoiser,
 ]
 
+#TODO bu kısma speaker awareness eklenecek
 
 def pick_input_file():
     """Tkinter ile dosya seçimi. İptal edilirse None."""

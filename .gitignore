@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Project artifacts
+output/
+outputs/
+pretrained_models/
+*.wav
+!test/**/*.wav
+
+# OS
+Thumbs.db
+.DS_Store
