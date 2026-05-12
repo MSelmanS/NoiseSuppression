@@ -33,3 +33,12 @@ pystoi==0.4.1
 # Kurulu değilse pesq_score() NaN döner, diğer metrikler etkilenmez.
 pesq==0.0.4
 tqdm==4.67.3
+
+# Dataset indirme (scripts/download_data.py)
+# 'datasets' HuggingFace üzerinden VCTK + Common Voice TR çeker.
+# 'requests' DEMAND zip dosyalarını Zenodo'dan çeker.
+datasets>=2.14.0
+requests>=2.31.0
+
+# HTML rapor + spektrogram (Task 5, eklenecek)
+librosa>=0.10.1
