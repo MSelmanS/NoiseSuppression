@@ -46,6 +46,26 @@ Sistem üç tür girişi destekler; pipeline aynı, sadece ses kaynağı değiş
 2. **Canlı mikrofon** (real-time test için — ilerleyen aşama)
 3. **Sentetik karışım** (temiz + gürültü, objektif kalite ölçümü için)
 
+### 4.4 Pipeline Sıralaması — Akış 1: önce denoise → sonra konuşmacı seçimi
+
+```
+mic / .wav  →  Denoise  →  Speaker Selection  →  output
+```
+
+**Karar:** önce denoise, sonra konuşmacı seçimi (Akış 1).
+
+**Gerekçe:**
+- Temiz ses üzerinde VAD daha güvenilir karar verir (gürültülü seste false-positive yüksek).
+- Mobil/telsiz senaryoda "yanlış konuşmacı seçimi" doğrudan fark edilen ürün hatasıdır.
+- CPU israfı kabul edilebilir: denoiser tüm akışa uygulanır ama RTF < 0.1 yeterince düşük.
+
+**Reddedilen alternatif (Akış 2):** Önce VAD, sadece konuşma pencerelerinde denoise.
+Pencere sınırlarında bozulma + speaker selection adımının yine gürültüyle çalışması.
+
+Modül arayüzü: `pipeline.base.BaseSpeakerSelector` ileride yazılacak — taslağı
+[pipeline/README.md](pipeline/README.md) dosyasında. `BaseDenoiser` ile aynı
+felsefe: `load()` + `process(audio, vad_segments=None)`.
+
 ## 5. Karşılaştırma Metrikleri
 
 Modeller iki eksende değerlendirilir:
@@ -134,7 +154,7 @@ Her benchmark çalıştırması kendi zaman damgalı klasörüne yazar — önce
 - [x] Per-SNR pivot raporları ve metrik-vs-SNR grafikleri — `benchmark/report.py`
 
 ### Sıradaki
-- [ ] Baskın konuşmacı seçimi modülü (VAD + RMS)
+- [ ] Baskın konuşmacı seçimi modülü (VAD + RMS) — **Pipeline sıralaması: Akış 1 (önce denoise)** kararlaştırıldı (Bölüm 4.4). Aday VAD'ler: Silero / WebRTC / saf enerji.
 - [ ] Canlı mikrofon pipeline'ı (real-time test)
 - [ ] Seçilen model(ler)in ONNX/TFLite dönüşümü
 - [ ] Android tarafı için ölçüm ve entegrasyon
