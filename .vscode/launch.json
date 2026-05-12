@@ -2,13 +2,94 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: benchmark_all.py",
+            "name": "bench_synthetic (full sweep, all models)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/benchmark_all.py",
+            "module": "scripts.bench_synthetic",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": true,
+            "args": [
+                "--clean-dir",
+                "data/clean",
+                "--noise-dir",
+                "data/noise",
+                "--snrs",
+                "-5",
+                "0",
+                "5",
+                "10",
+                "15",
+                "--max-pairs",
+                "20",
+                "--n-repeats",
+                "3",
+                "--models",
+                "all"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "bench_synthetic (quick — 2 SNRs, fast models)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.bench_synthetic",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--clean-dir",
+                "data/clean",
+                "--noise-dir",
+                "data/noise",
+                "--snrs",
+                "0",
+                "10",
+                "--max-pairs",
+                "4",
+                "--n-repeats",
+                "2",
+                "--models",
+                "spectral_subtraction,rnnoise,deepfilternet,metricgan_plus"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "bench_real (auto-find wav, all models)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.bench_real",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--n-repeats",
+                "3",
+                "--models",
+                "all"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "bench_real (prompt for --wav)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.bench_real",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--wav",
+                "${input:wavPath}",
+                "--models",
+                "all"
+            ],
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
@@ -24,6 +105,14 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "wavPath",
+            "type": "promptString",
+            "description": "Path to .wav file for bench_real",
+            "default": "test/sample.wav"
         }
     ]
 }

@@ -88,15 +88,27 @@ project/
 │   ├── deepfilternet_model.py
 │   ├── demucs_model.py    # dns48/dns64/master64 varyantları
 │   └── metricgan_model.py
-├── benchmark/             # ölçüm yardımcıları
-│   └── metrics.py         # süre, RAM, boyut, parametre sayısı
-├── benchmark_all.py       # toplu karşılaştırma scripti
+├── benchmark/             # ölçüm ve raporlama altyapısı
+│   ├── metrics.py         # süre, peak RSS, boyut, param, SI-SDR/STOI/PESQ
+│   ├── mixer.py           # clean+noise -> hedef SNR karışımı
+│   ├── runner.py          # tek model için load+process ölçümleri (warmup + N tekrar)
+│   └── report.py          # CSV, XLSX, per-SNR pivot ve grafik üretimi
+├── scripts/               # çalıştırılabilir benchmark giriş noktaları
+│   ├── bench_real.py      # tek wav, sadece performans (RTF, peak RAM)
+│   └── bench_synthetic.py # clean × noise × SNR, performans + kalite + grafikler
+├── legacy/                # eski referans kod (artık kullanılmıyor)
+│   └── benchmark_all.py
 └── output/                # zaman damgalı deney klasörleri
-    └── output_YYYYMMDD_HHMMSS/
-        ├── 00_original.wav
-        ├── NN_<model>.wav
-        ├── results.csv
-        └── results.xlsx
+    ├── bench_real_YYYYMMDD_HHMMSS/
+    │   ├── 00_original.wav
+    │   ├── NN_<model>.wav
+    │   ├── results.csv
+    │   └── results.xlsx
+    └── bench_synthetic_YYYYMMDD_HHMMSS/
+        ├── results_raw.csv
+        ├── results_raw.xlsx
+        ├── results_per_snr.xlsx
+        └── plot_<metric>_vs_snr.png
 ```
 
 ## 8. Deney Çıktı Stratejisi
@@ -114,10 +126,14 @@ Her benchmark çalıştırması kendi zaman damgalı klasörüne yazar — önce
 - [x] Model wrapper'ları: Spectral Subtraction, RNNoise, DeepFilterNet, Demucs (3 varyant), MetricGAN+
 - [x] Benchmark altyapısı (RTF, süre, RAM, boyut, parametre sayısı)
 - [x] Sonuç raporlama (CSV + formatlı XLSX)
+- [x] İstatistiksel ölçüm (warmup + N tekrar, mean±std) — `benchmark/runner.py`
+- [x] Peak RSS tabanlı RAM ölçümü — `PeakRSSTracker` (background thread, ~50ms örnekleme)
+- [x] Objektif kalite metrikleri (PESQ, STOI, SI-SDR) — `benchmark/metrics.py`
+- [x] Sentetik veri üretimi (temiz + gürültü, hedef SNR karışımı) — `benchmark/mixer.py`
+- [x] İki ayrı benchmark scripti (gerçek wav vs sentetik) — `scripts/bench_real.py`, `scripts/bench_synthetic.py`
+- [x] Per-SNR pivot raporları ve metrik-vs-SNR grafikleri — `benchmark/report.py`
 
 ### Sıradaki
-- [ ] Objektif kalite metrikleri (PESQ, STOI, SI-SDR)
-- [ ] Sentetik veri üretimi (temiz + gürültü, farklı SNR seviyeleri)
 - [ ] Baskın konuşmacı seçimi modülü (VAD + RMS)
 - [ ] Canlı mikrofon pipeline'ı (real-time test)
 - [ ] Seçilen model(ler)in ONNX/TFLite dönüşümü

@@ -27,6 +27,9 @@ speechbrain==0.5.16
 HyperPyYAML==1.2.3
 huggingface-hub==0.19.4
 
-# Benchmark output / utility
+# Benchmark output / utility / objektif kalite metrikleri
 pystoi==0.4.1
+# pesq Windows'ta C derleyici gerektirir (Visual C++ Build Tools).
+# Kurulu değilse pesq_score() NaN döner, diğer metrikler etkilenmez.
+pesq==0.0.4
 tqdm==4.67.3
