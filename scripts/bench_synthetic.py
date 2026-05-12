@@ -30,27 +30,47 @@ from benchmark.report import (
     print_table,
 )
 from scripts._model_registry import resolve_models, MODEL_REGISTRY
+from scripts.profiles import PROFILES, get_profile, estimate_measurements
+
+
+# Profile yoksa kullanılacak yerleşik varsayılanlar
+_BUILTIN_DEFAULTS: dict = {
+    "clean_dir": "data/clean",
+    "noise_dir": "data/noise",
+    "snrs": [-5.0, 0.0, 5.0, 10.0, 15.0],
+    "max_pairs": 20,
+    "n_repeats": 3,
+    "models": "all",
+}
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Sentetik karışım (clean+noise) üzerinde benchmark + kalite metrikleri.",
     )
+    # --profile profile dict'inden değerleri okur; aşağıdaki --xxx None default'ları
+    # "kullanıcı bunu verdi mi?" ayrımı için kullanılır.
+    p.add_argument(
+        "--profile",
+        choices=list(PROFILES.keys()),
+        default=None,
+        help=f"Önceden tanımlı profil. Geçerli: {','.join(PROFILES.keys())}",
+    )
     p.add_argument(
         "--clean-dir",
-        default="data/clean",
-        help="Temiz konuşma .wav klasörü (varsayılan: data/clean)",
+        default=None,
+        help="Temiz konuşma .wav klasörü (varsayılan: profil veya data/clean)",
     )
     p.add_argument(
         "--noise-dir",
-        default="data/noise",
-        help="Gürültü .wav klasörü (varsayılan: data/noise)",
+        default=None,
+        help="Gürültü .wav klasörü (varsayılan: profil veya data/noise)",
     )
     p.add_argument(
         "--snrs",
         type=float,
         nargs="+",
-        default=[-5.0, 0.0, 5.0, 10.0, 15.0],
+        default=None,
         help="Hedef SNR seviyeleri (dB).",
     )
     p.add_argument(
@@ -61,18 +81,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--max-pairs",
         type=int,
-        default=20,
+        default=None,
         help="(clean, noise) çiftlerinin maks. sayısı (rastgele örnek).",
     )
     p.add_argument(
         "--n-repeats",
         type=int,
-        default=3,
+        default=None,
         help="Her process() ölçümü için tekrar sayısı.",
     )
     p.add_argument(
         "--models",
-        default="all",
+        default=None,
         help=f"'all' veya virgülle ayrılmış isimler. Geçerli: {','.join(MODEL_REGISTRY.keys())}",
     )
     p.add_argument("--seed", type=int, default=42, help="Çift örnekleme tohumu.")
@@ -86,7 +106,37 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Denoised + noisy mix .wav dosyalarını kaydetme (yalnızca metrik üret).",
     )
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+
+    # Profile + CLI override birleştir.
+    # --profile verilmişse o profile başlat, yoksa _BUILTIN_DEFAULTS'a düş.
+    if args.profile is not None:
+        base = get_profile(args.profile)
+        print(f"Profil seçildi: '{args.profile}' — {base.get('description', '')}")
+    else:
+        base = _BUILTIN_DEFAULTS
+
+    # None olan her arg base'den; explicit verilen değerler dokunulmaz.
+    overridable = ("clean_dir", "noise_dir", "snrs", "max_pairs", "n_repeats", "models")
+    for key in overridable:
+        if getattr(args, key) is None:
+            setattr(args, key, base[key])
+
+    # Tahmini koşum büyüklüğünü logla
+    try:
+        n_models = len(resolve_models(args.models))
+    except Exception:
+        n_models = len(MODEL_REGISTRY)
+    n_total = estimate_measurements(
+        {"max_pairs": args.max_pairs, "snrs": args.snrs, "n_repeats": args.n_repeats},
+        n_models=n_models,
+    )
+    print(
+        f"Konfig: {args.max_pairs} pair × {len(args.snrs)} SNR × "
+        f"{args.n_repeats} rep × {n_models} model = {n_total} process çağrısı"
+    )
+
+    return args
 
 
 def _list_wavs(d: str) -> list[str]:

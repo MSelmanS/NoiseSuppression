@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "bench_synthetic (full sweep, all models)",
+            "name": "bench_synthetic (profile: s_quick — full sweep)",
             "type": "debugpy",
             "request": "launch",
             "module": "scripts.bench_synthetic",
@@ -10,29 +10,15 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--clean-dir",
-                "data/clean",
-                "--noise-dir",
-                "data/noise",
-                "--snrs",
-                "-5",
-                "0",
-                "5",
-                "10",
-                "15",
-                "--max-pairs",
-                "20",
-                "--n-repeats",
-                "3",
-                "--models",
-                "all"
+                "--profile",
+                "s_quick"
             ],
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
         },
         {
-            "name": "bench_synthetic (quick — 2 SNRs, fast models)",
+            "name": "bench_synthetic (profile: s_smoke — fast)",
             "type": "debugpy",
             "request": "launch",
             "module": "scripts.bench_synthetic",
@@ -40,19 +26,24 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--clean-dir",
-                "data/clean",
-                "--noise-dir",
-                "data/noise",
-                "--snrs",
-                "0",
-                "10",
-                "--max-pairs",
-                "4",
-                "--n-repeats",
-                "2",
-                "--models",
-                "spectral_subtraction,rnnoise,deepfilternet,metricgan_plus"
+                "--profile",
+                "s_smoke"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "bench_synthetic (profile: m_medium — large run)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.bench_synthetic",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--profile",
+                "m_medium"
             ],
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
