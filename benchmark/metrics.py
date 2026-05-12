@@ -169,6 +169,53 @@ def stoi_score(reference: np.ndarray, estimate: np.ndarray, sr: int = 16000) -> 
         return float("nan")
 
 
+def rms_db(x: np.ndarray) -> float:
+    """Sinyalin RMS'i dB cinsinden (referans = 1.0 full scale)."""
+    x = np.asarray(x, dtype=np.float64)
+    rms = float(np.sqrt(np.mean(x ** 2) + 1e-12))
+    return 20.0 * np.log10(rms + 1e-12)
+
+
+def hf_energy_ratio(
+    output: np.ndarray,
+    noisy: np.ndarray,
+    sr: int = 16000,
+    cutoff_hz: float = 4000.0,
+) -> float:
+    """Output ile noisy'nin yüksek frekans (>= cutoff_hz) enerji oranı.
+
+    Aşırı agresif bastırma detektörü: model HF bandını tamamen sıfırlamışsa
+    bu oran çok küçük olur (ör. < 0.001). Müzikal artifakt veya "kapalı"
+    konuşma sesinin göstergesi.
+
+    Args:
+      output: model çıktısı
+      noisy: model girdisi (gürültülü mix)
+      sr: örnekleme hızı
+      cutoff_hz: HF bandı alt sınırı (varsayılan 4 kHz)
+
+    Returns:
+      hf_energy(output) / hf_energy(noisy). Noisy HF enerjisi 0'a yakınsa NaN.
+    """
+    out, noi = _align(output, noisy)
+
+    def _hf_energy(x: np.ndarray) -> float:
+        # FFT-based; tek-taraflı güç spektrumu
+        N = len(x)
+        if N == 0:
+            return 0.0
+        X = np.fft.rfft(x.astype(np.float64))
+        freqs = np.fft.rfftfreq(N, d=1.0 / sr)
+        power = (np.abs(X) ** 2)
+        return float(power[freqs >= cutoff_hz].sum())
+
+    e_noisy = _hf_energy(noi)
+    if e_noisy < 1e-12:
+        return float("nan")
+    e_out = _hf_energy(out)
+    return e_out / e_noisy
+
+
 def pesq_score(reference: np.ndarray, estimate: np.ndarray, sr: int = 16000) -> float:
     """pesq paketi wrapper. Aralık ~1..4.5, yüksek = iyi.
 

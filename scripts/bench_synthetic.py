@@ -30,6 +30,7 @@ from benchmark.report import (
     print_table,
 )
 from benchmark.sampling import pick_listening_samples, is_selected
+from benchmark.anomaly import detect_anomalies, summarize_anomalies
 from scripts._model_registry import resolve_models, MODEL_REGISTRY
 from scripts.profiles import PROFILES, get_profile, estimate_measurements
 
@@ -366,8 +367,11 @@ def main(argv: list[str] | None = None) -> int:
                     row = {
                         "model": model.name,
                         "snr_db": snr,
+                        # Sahne adı analiz için lazım; clean dilini de saklayalım
+                        "scene": scene,
+                        "lang": lang,
                         "clean_file": os.path.basename(clean_path),
-                        "noise_file": os.path.basename(noise_path),
+                        "noise_file": f"{scene}/{os.path.basename(noise_path)}",
                         "load_time_s": round(load_time, 3),
                         **proc_result,
                         # load + process peak'inin maks'ı (yaklaşık peak_ram benzeri)
@@ -424,6 +428,19 @@ def main(argv: list[str] | None = None) -> int:
     agg_cols = [c for c in ("rtf_mean", "peak_ram_mb", "si_sdr", "stoi", "pesq") if c in df.columns]
     summary = df.groupby("model")[agg_cols].mean().round(3).reset_index()
     print_table(summary.to_dict(orient="records"))
+
+    # Anomali yakalama (Task 4)
+    anomalies = detect_anomalies(df)
+    anomalies_path = os.path.join(out_dir, "anomalies.csv")
+    if len(anomalies) > 0:
+        anomalies.to_csv(anomalies_path, index=False, encoding="utf-8")
+        counts = summarize_anomalies(anomalies)
+        print(f"\n=== {len(anomalies)} anomali yakalandı ===")
+        for atype, n in counts.items():
+            print(f"  {atype}: {n}")
+        print(f"  Detay: {anomalies_path}")
+    else:
+        print("\n=== Anomali yakalanmadı ===")
 
     print(f"\nRaw CSV     : {csv_path}")
     print(f"Raw XLSX    : {raw_xlsx}")

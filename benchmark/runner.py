@@ -21,6 +21,8 @@ from .metrics import (
     si_sdr,
     stoi_score,
     pesq_score,
+    rms_db,
+    hf_energy_ratio,
 )
 
 
@@ -86,6 +88,14 @@ def run_processing_only(
         out["si_sdr"] = round(quality["si_sdr"], 3)
         out["stoi"] = round(quality["stoi"], 3) if quality["stoi"] == quality["stoi"] else float("nan")
         out["pesq"] = round(quality["pesq"], 3) if quality["pesq"] == quality["pesq"] else float("nan")
+
+    # Anomali detektörleri (Task 4) için RMS ve HF oranı.
+    # `audio` model'in input'u (noisy mix), `denoised` output. Reference kullanılmaz.
+    if denoised is not None:
+        out["noisy_rms_db"] = round(rms_db(audio), 2)
+        out["output_rms_db"] = round(rms_db(denoised), 2)
+        hf = hf_energy_ratio(denoised, audio, sr=model.sample_rate)
+        out["hf_ratio"] = round(hf, 5) if hf == hf else float("nan")
 
     return out, denoised
 
