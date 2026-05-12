@@ -31,6 +31,7 @@ from benchmark.report import (
 )
 from benchmark.sampling import pick_listening_samples, is_selected
 from benchmark.anomaly import detect_anomalies, summarize_anomalies
+from benchmark.html_report import generate_html_report
 from scripts._model_registry import resolve_models, MODEL_REGISTRY
 from scripts.profiles import PROFILES, get_profile, estimate_measurements
 
@@ -134,6 +135,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  samples — sadece dinleme galerisi için seçilen 28 + 5 örnek (varsayılan)\n"
             "  none    — hiçbir wav kaydetme, sadece metrikler\n"
         ),
+    )
+    p.add_argument(
+        "--no-html-report",
+        action="store_true",
+        help="HTML raporu üretme (varsayılan: üret). save-strategy=none ise yine atlanır.",
     )
     args = p.parse_args(argv)
 
@@ -441,6 +447,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  Detay: {anomalies_path}")
     else:
         print("\n=== Anomali yakalanmadı ===")
+
+    # HTML rapor (Task 5)
+    # save-strategy=none ise samples klasörü yok, galeri boş kalır; yine de
+    # liderlik + hipotez + anomali + plot bölümleri anlamlı.
+    if not args.no_html_report:
+        try:
+            report_path = generate_html_report(
+                out_dir,
+                rows,
+                profile=args.profile,
+            )
+            size_mb = os.path.getsize(report_path) / (1024 * 1024)
+            print(f"HTML rapor: {report_path} ({size_mb:.1f} MB)")
+        except Exception as e:
+            print(f"HTML rapor üretilemedi: {type(e).__name__}: {e}")
 
     print(f"\nRaw CSV     : {csv_path}")
     print(f"Raw XLSX    : {raw_xlsx}")
