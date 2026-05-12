@@ -37,8 +37,11 @@ tqdm==4.67.3
 # Dataset indirme (scripts/download_data.py)
 # 'datasets' HuggingFace üzerinden VCTK + Common Voice TR çeker.
 # 'requests' DEMAND zip dosyalarını Zenodo'dan çeker.
+# 'truststore' Python'a OS cert store'unu kullandırır — kurumsal CA bundle'lı
+# Windows ortamlarda HF/Zenodo SSL hatasını çözer.
 datasets>=2.14.0
 requests>=2.31.0
+truststore>=0.8.0
 
 # HTML rapor + spektrogram (Task 5, eklenecek)
 librosa>=0.10.1

@@ -34,6 +34,15 @@ from typing import Callable
 
 import numpy as np
 
+# Bazı ortamlarda (özellikle kurumsal Windows) certifi'nin yerleşik CA bundle'ı
+# OS'in güvendiği sertifikaları içermez ve HuggingFace / Zenodo SSL hatalı çıkar.
+# truststore varsa OS cert store'unu kullan; yoksa sessizce geç.
+try:
+    import truststore  # type: ignore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 from audio_io.file_io import load_audio, save_audio
 
 
@@ -77,7 +86,9 @@ DEMAND_SCENES: list[str] = [
     "NPARK",    # Park (rüzgar / doğa)
 ]
 
-DEMAND_BASE_URL = "https://zenodo.org/record/1227121/files"
+# Zenodo modern URL şeması: /records/{id}/files/{name}?download=1
+DEMAND_BASE_URL = "https://zenodo.org/records/1227121/files"
+DEMAND_URL_SUFFIX = "?download=1"
 
 
 # ---------------------------------------------------------------------------
@@ -129,89 +140,84 @@ def _retry_action(name: str, fn: Callable[[], None]) -> bool:
 # ---------------------------------------------------------------------------
 
 def download_vctk(force: bool = False) -> int:
-    """10 VCTK konuşmacısının ilk cümlesini indir.
+    """İngilizce temiz konuşma — VCTK denenir, başarısızsa LibriSpeech fallback.
 
-    HuggingFace 'CSTR-Edinburgh/vctk' (veya benzeri mirror) deneniyor.
-    Auth gerekmez genellikle. Başarısız olursa kullanıcıya alternatif söyleniyor.
+    Hedef: 10 farklı konuşmacı (mümkünse), her birinden 1 utterance. VCTK HF'de
+    sorun çıkarıyorsa (range request hatası vs.) LibriSpeech dev-clean kullanılır
+    — küçük (~300 MB) ve streaming destekli.
 
-    Returns: başarıyla indirilen dosya sayısı.
+    Çıktı: data/clean/en/spk{ID}_utt001.wav
     """
-    print("\n=== VCTK (English clean speech) ===")
+    print("\n=== VCTK / LibriSpeech (English clean speech) ===")
 
-    # Çoğu dosya zaten varsa erken çık
-    existing = [
-        CLEAN_EN_DIR / f"spk{spk}_utt001.wav" for spk, _ in VCTK_SPEAKERS
-    ]
-    if not force and all(_exists(p) for p in existing):
-        print(f"  Tüm {len(existing)} dosya zaten var, atlanıyor.")
-        return len(existing)
+    existing_count = len(list(CLEAN_EN_DIR.glob("*.wav")))
+    if not force and existing_count >= 10:
+        print(f"  Zaten {existing_count} İngilizce dosya var, atlanıyor.")
+        return existing_count
 
     try:
         from datasets import load_dataset  # type: ignore
     except ImportError:
-        print("  [HATA] 'datasets' paketi kurulu değil. Kurmak için: pip install datasets")
+        print("  [HATA] 'datasets' paketi kurulu değil.")
         return 0
 
-    # HF'de VCTK için yaygın mirror'lar
-    candidate_repos = [
-        "CSTR-Edinburgh/vctk",
-        "vctk",
+    # Önce VCTK, sonra LibriSpeech. İlk başarılı olanla devam et.
+    candidates = [
+        ("vctk", None, "train"),
+        ("openslr/librispeech_asr", "clean", "validation"),
     ]
 
-    ds = None
-    for repo in candidate_repos:
-        try:
-            print(f"  HF'de '{repo}' deneniyor (streaming)...")
-            ds = load_dataset(repo, split="train", streaming=True, trust_remote_code=True)
-            break
-        except Exception as e:
-            print(f"    [{repo}] başarısız: {type(e).__name__}: {str(e)[:120]}")
-
-    if ds is None:
-        print("  VCTK indirilemedi. Manuel: https://datashare.ed.ac.uk/handle/10283/3443")
-        return 0
-
-    wanted_speakers = {spk: gender for spk, gender in VCTK_SPEAKERS}
-    found: dict[str, bool] = {spk: False for spk in wanted_speakers}
     count = 0
+    seen_speakers: set[str] = set()
 
-    for sample in ds:
-        # HF VCTK sample alanları: 'audio' (dict: array, sampling_rate, path), 'speaker_id', ...
-        spk_id = sample.get("speaker_id") or sample.get("speaker") or ""
-        # Bazı mirror'larda speaker_id 'p225' yerine '225' olabilir
-        spk_norm = spk_id if spk_id.startswith("p") else f"p{spk_id}"
-        if spk_norm not in wanted_speakers or found[spk_norm]:
-            continue
-
-        audio = sample.get("audio")
-        if not audio or "array" not in audio:
-            continue
-
-        dest = CLEAN_EN_DIR / f"spk{spk_norm}_utt001.wav"
-        if not force and _exists(dest):
-            found[spk_norm] = True
-            continue
-
-        ok = _retry_action(
-            f"VCTK {spk_norm}",
-            lambda a=audio, d=dest: _normalize_and_save(
-                np.asarray(a["array"], dtype=np.float32),
-                int(a["sampling_rate"]),
-                d,
-            ),
-        )
-        if ok:
-            found[spk_norm] = True
-            count += 1
-            print(f"  + {dest.name}")
-
-        if all(found.values()):
+    for repo, config, split in candidates:
+        if count >= 10:
             break
+        try:
+            print(f"  HF'de '{repo}' (config={config}, split={split}) deneniyor (streaming)...")
+            if config:
+                ds = load_dataset(repo, config, split=split, streaming=True, trust_remote_code=True)
+            else:
+                ds = load_dataset(repo, split=split, streaming=True, trust_remote_code=True)
+        except Exception as e:
+            print(f"    [{repo}] yükleme başarısız: {type(e).__name__}: {str(e)[:120]}")
+            continue
 
-    missing = [s for s, ok in found.items() if not ok]
-    if missing:
-        print(f"  Eksik konuşmacılar: {missing}")
-    print(f"  VCTK: {count} yeni dosya indirildi, toplam {sum(found.values())}/{len(wanted_speakers)}")
+        # Iter loop'unu da koru — bazı kaynaklar load_dataset'i geçer ama iter'da
+        # range-request hatası verir
+        try:
+            for sample in ds:
+                if count >= 10:
+                    break
+                spk_id = str(sample.get("speaker_id") or sample.get("speaker") or "anon")
+                if spk_id in seen_speakers:
+                    continue
+                audio = sample.get("audio")
+                if not audio or "array" not in audio:
+                    continue
+                dest = CLEAN_EN_DIR / f"spk{spk_id}_utt001.wav"
+                if not force and _exists(dest):
+                    seen_speakers.add(spk_id)
+                    count += 1
+                    continue
+                ok = _retry_action(
+                    f"EN sample {spk_id} ({repo})",
+                    lambda a=audio, d=dest: _normalize_and_save(
+                        np.asarray(a["array"], dtype=np.float32),
+                        int(a["sampling_rate"]),
+                        d,
+                    ),
+                )
+                if ok:
+                    seen_speakers.add(spk_id)
+                    count += 1
+                    print(f"  + {dest.name}  (kaynak: {repo})")
+        except Exception as e:
+            print(f"    [{repo}] iter başarısız: {type(e).__name__}: {str(e)[:120]}")
+            # Sonraki kaynağa düş
+            continue
+
+    print(f"  EN: {count}/10 dosya indirildi.")
     return count
 
 
@@ -220,14 +226,17 @@ def download_vctk(force: bool = False) -> int:
 # ---------------------------------------------------------------------------
 
 def download_cv_tr(force: bool = False) -> int:
-    """Common Voice Turkish'ten kalite filtresine takılan 10 dosya indir.
+    """Türkçe temiz konuşma — Common Voice TR (gated) veya açık alternatifler.
 
-    Filtre: up_votes >= 2, down_votes == 0. Çeşitli konuşmacılar.
+    Sıra:
+      1. shunyalabs/turkish-speech-dataset (açık, ASR datası)
+      2. Speech-data/Turkish-Speech-Dataset (açık)
+      3. mozilla-foundation/common_voice_17_0 (gated, login gerekli)
 
-    NOT: Common Voice gated dataset. `huggingface-cli login` gerekir + Mozilla
-    sayfasında dataset'i kabul etmek gerekir.
+    İlk başarılı kaynaktan 10 dosya çekilir; mümkünse her örnek için farklı
+    konuşmacı (HF'de 'client_id' veya 'speaker_id' yoksa örnek indeksleri kullanılır).
     """
-    print("\n=== Common Voice Turkish ===")
+    print("\n=== Turkish clean speech ===")
 
     existing = sorted(CLEAN_TR_DIR.glob("spk*_utt*.wav"))
     if not force and len(existing) >= 10:
@@ -240,69 +249,74 @@ def download_cv_tr(force: bool = False) -> int:
         print("  [HATA] 'datasets' paketi kurulu değil. pip install datasets")
         return 0
 
-    candidate_repos = [
-        ("mozilla-foundation/common_voice_17_0", "tr"),
-        ("mozilla-foundation/common_voice_16_1", "tr"),
-        ("mozilla-foundation/common_voice_13_0", "tr"),
+    # (repo, config, split, audio_key, filter_func, spk_key)
+    candidates = [
+        ("shunyalabs/turkish-speech-dataset", None, "train", "audio", None, None),
+        ("Speech-data/Turkish-Speech-Dataset", None, "train", "audio", None, "AudioID"),
+        ("mozilla-foundation/common_voice_17_0", "tr", "validated", "audio",
+         lambda s: int(s.get("up_votes", 0)) >= 2 and int(s.get("down_votes", 0)) == 0,
+         "client_id"),
     ]
 
-    ds = None
-    for repo, lang in candidate_repos:
-        try:
-            print(f"  HF'de '{repo}' (tr) deneniyor (streaming)...")
-            ds = load_dataset(repo, lang, split="validated", streaming=True, trust_remote_code=True)
-            break
-        except Exception as e:
-            err = str(e)[:200]
-            print(f"    [{repo}] başarısız: {type(e).__name__}: {err}")
-            if "gated" in err.lower() or "401" in err or "403" in err:
-                print(
-                    "    Common Voice gated dataset. Önce: "
-                    "https://huggingface.co/datasets/mozilla-foundation/common_voice_17_0 "
-                    "sayfasında accept + `huggingface-cli login`."
-                )
-
-    if ds is None:
-        print("  Common Voice TR indirilemedi.")
-        return 0
-
-    seen_clients: set[str] = set()
     count = 0
-    for sample in ds:
+    seen_speakers: set[str] = set()
+
+    for repo, config, split, audio_key, filter_fn, spk_key in candidates:
         if count >= 10:
             break
-        up = int(sample.get("up_votes", 0))
-        down = int(sample.get("down_votes", 0))
-        if up < 2 or down > 0:
-            continue
-        client = sample.get("client_id", "")
-        if client in seen_clients:
-            continue  # konuşmacı çeşitliliği
-        audio = sample.get("audio")
-        if not audio or "array" not in audio:
-            continue
-
-        spk_short = (client[:8] if client else f"spk{count:02d}")
-        dest = CLEAN_TR_DIR / f"spk{spk_short}_utt{count+1:03d}.wav"
-        if not force and _exists(dest):
-            seen_clients.add(client)
-            count += 1
+        try:
+            print(f"  HF'de '{repo}' deneniyor (streaming)...")
+            if config:
+                ds = load_dataset(repo, config, split=split, streaming=True, trust_remote_code=True)
+            else:
+                ds = load_dataset(repo, split=split, streaming=True, trust_remote_code=True)
+        except Exception as e:
+            err = str(e)[:160]
+            print(f"    [{repo}] yükleme başarısız: {type(e).__name__}: {err}")
+            if "gated" in err.lower() or "401" in err or "403" in err:
+                print(
+                    "    Gated dataset. Önce 'huggingface-cli login' + "
+                    f"https://huggingface.co/datasets/{repo} sayfasında accept."
+                )
             continue
 
-        ok = _retry_action(
-            f"CV-TR sample {count+1}",
-            lambda a=audio, d=dest: _normalize_and_save(
-                np.asarray(a["array"], dtype=np.float32),
-                int(a["sampling_rate"]),
-                d,
-            ),
-        )
-        if ok:
-            seen_clients.add(client)
-            count += 1
-            print(f"  + {dest.name}")
+        try:
+            for i, sample in enumerate(ds):
+                if count >= 10:
+                    break
+                if filter_fn is not None and not filter_fn(sample):
+                    continue
+                audio = sample.get(audio_key)
+                if not audio or "array" not in audio:
+                    continue
+                # Konuşmacı çeşitliliği için (varsa)
+                spk_val = sample.get(spk_key) if spk_key else None
+                spk = str(spk_val) if spk_val else f"anon{i:04d}"
+                if spk in seen_speakers:
+                    continue
+                spk_short = spk[:10]
+                dest = CLEAN_TR_DIR / f"spk{spk_short}_utt{count+1:03d}.wav"
+                if not force and _exists(dest):
+                    seen_speakers.add(spk)
+                    count += 1
+                    continue
+                ok = _retry_action(
+                    f"TR sample {count+1} ({repo})",
+                    lambda a=audio, d=dest: _normalize_and_save(
+                        np.asarray(a["array"], dtype=np.float32),
+                        int(a["sampling_rate"]),
+                        d,
+                    ),
+                )
+                if ok:
+                    seen_speakers.add(spk)
+                    count += 1
+                    print(f"  + {dest.name}  (kaynak: {repo})")
+        except Exception as e:
+            print(f"    [{repo}] iter başarısız: {type(e).__name__}: {str(e)[:120]}")
+            continue
 
-    print(f"  CV-TR: {count}/10 dosya indirildi.")
+    print(f"  TR: {count}/10 dosya indirildi.")
     return count
 
 
@@ -332,11 +346,18 @@ def download_demand(force: bool = False) -> int:
             print(f"  {scene}/ch01.wav zaten var, atlanıyor.")
             continue
 
-        url = f"{DEMAND_BASE_URL}/{scene}.zip"
+        url = f"{DEMAND_BASE_URL}/{scene}_16k.zip{DEMAND_URL_SUFFIX}"
         print(f"  {scene} indiriliyor: {url}")
         try:
-            resp = requests.get(url, stream=True, timeout=120)
+            # Stream'sız ki content-length kontrolü yapabilelim
+            resp = requests.get(url, timeout=600)
+            # 16k yoksa 48k'yı dene (daha büyük ama wav 16'a resample edilir)
+            if resp.status_code == 404:
+                url = f"{DEMAND_BASE_URL}/{scene}_48k.zip{DEMAND_URL_SUFFIX}"
+                print(f"    {scene}_16k.zip yok, {scene}_48k.zip deniyorum: {url}")
+                resp = requests.get(url, timeout=600)
             resp.raise_for_status()
+            print(f"    {len(resp.content) / (1024*1024):.1f} MB indi, açılıyor...")
             zip_bytes = io.BytesIO(resp.content)
             with zipfile.ZipFile(zip_bytes) as zf:
                 # DEMAND zip'inde dosya yolu: {SCENE}/ch01.wav (genelde)
