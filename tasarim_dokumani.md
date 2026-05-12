@@ -152,6 +152,13 @@ Her benchmark çalıştırması kendi zaman damgalı klasörüne yazar — önce
 - [x] Sentetik veri üretimi (temiz + gürültü, hedef SNR karışımı) — `benchmark/mixer.py`
 - [x] İki ayrı benchmark scripti (gerçek wav vs sentetik) — `scripts/bench_real.py`, `scripts/bench_synthetic.py`
 - [x] Per-SNR pivot raporları ve metrik-vs-SNR grafikleri — `benchmark/report.py`
+- [x] Dataset indirme scripti (VCTK + Common Voice TR + DEMAND 7 sahne) — `scripts/download_data.py`
+- [x] Profile sistemi (s_quick / s_smoke / m_medium) — `scripts/profiles.py`
+- [x] Akıllı örnek seçici + `--save-strategy` (all / samples / none) — `benchmark/sampling.py`
+- [x] Anomali yakalama (4 detektör: PESQ-RMS, varyans, trend, aşırı bastırma) — `benchmark/anomaly.py`
+- [x] Otomatik hipotez testi (H1-H4) — `benchmark/hypothesis.py`
+- [x] Tek-dosya HTML rapor (embedded audio + spektrogram + heatmap) — `benchmark/html_report.py`
+- [x] Pipeline sıralaması kararı (Akış 1: önce denoise → sonra konuşmacı seçimi) — `pipeline/README.md`
 
 ### Sıradaki
 - [ ] Baskın konuşmacı seçimi modülü (VAD + RMS) — **Pipeline sıralaması: Akış 1 (önce denoise)** kararlaştırıldı (Bölüm 4.4). Aday VAD'ler: Silero / WebRTC / saf enerji.
