@@ -29,8 +29,25 @@ from benchmark.report import (
     plot_per_snr,
     print_table,
 )
+from benchmark.sampling import pick_listening_samples, is_selected
 from scripts._model_registry import resolve_models, MODEL_REGISTRY
 from scripts.profiles import PROFILES, get_profile, estimate_measurements
+
+
+def _scene_from_path(noise_path: str) -> str:
+    """data/noise/{SCENE}/ch01.wav -> {SCENE}"""
+    parts = os.path.normpath(noise_path).split(os.sep)
+    # parent of the .wav file
+    return parts[-2] if len(parts) >= 2 else "unknown"
+
+
+def _lang_from_path(clean_path: str) -> str:
+    """data/clean/en/spkXX.wav -> en; data/clean/tr/... -> tr"""
+    parts = os.path.normpath(clean_path).split(os.sep)
+    for p in parts:
+        if p.lower() in ("en", "tr"):
+            return p.lower()
+    return "xx"
 
 
 # Profile yoksa kullanılacak yerleşik varsayılanlar
@@ -104,7 +121,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--no-save-wavs",
         action="store_true",
-        help="Denoised + noisy mix .wav dosyalarını kaydetme (yalnızca metrik üret).",
+        help="(Deprecated, --save-strategy=none ile aynı) Denoised + noisy mix kaydetme.",
+    )
+    p.add_argument(
+        "--save-strategy",
+        choices=["all", "samples", "none"],
+        default="samples",
+        help=(
+            "Wav kayıt stratejisi:\n"
+            "  all     — her (model,pair,snr) için kaydet (eski davranış, büyük disk)\n"
+            "  samples — sadece dinleme galerisi için seçilen 28 + 5 örnek (varsayılan)\n"
+            "  none    — hiçbir wav kaydetme, sadece metrikler\n"
+        ),
     )
     args = p.parse_args(argv)
 
@@ -201,14 +229,40 @@ def main(argv: list[str] | None = None) -> int:
 
     rows: list[dict] = []
     do_warmup = not args.no_warmup
-    save_wavs = not args.no_save_wavs
 
-    # Wav kaydı: aynı (pair, snr) için clean ve noisy mix'i sadece ilk gördüğümüzde yazarız.
-    # Birden çok model aynı girdi üzerinde çalıştığı için ikinci kez yazmaya gerek yok.
-    input_dir = os.path.join(out_dir, "_input")
+    # Geriye uyumluluk: --no-save-wavs varsa --save-strategy none kabul et
+    if args.no_save_wavs:
+        args.save_strategy = "none"
+    print(f"Save strategy: {args.save_strategy}")
+
+    # Strategy='samples' ise hangi (pi, snr) kombinasyonlarının kaydedileceğini
+    # şimdi belirle (deterministik, seed=42).
+    selected_samples: set[tuple[int, float]] = set()
+    if args.save_strategy == "samples":
+        selected_samples = pick_listening_samples(pairs, args.snrs, seed=args.seed)
+        print(
+            f"Dinleme galerisi seçimi: {len(selected_samples)} (pair, snr) kombinasyonu "
+            f"(her biri için {len(model_classes)} model çıktısı kaydedilecek)"
+        )
+
+    # Klasör hazırlığı strategy'ye göre
+    # - all: out_dir/_input/ + out_dir/{model}/
+    # - samples: out_dir/samples/_reference/ + out_dir/samples/{model}/
+    # - none: hiçbiri
+    if args.save_strategy == "all":
+        ref_dir = os.path.join(out_dir, "_input")
+        per_model_root = out_dir
+    elif args.save_strategy == "samples":
+        ref_dir = os.path.join(out_dir, "samples", "_reference")
+        per_model_root = os.path.join(out_dir, "samples")
+    else:  # none
+        ref_dir = ""
+        per_model_root = ""
+
+    if args.save_strategy != "none":
+        os.makedirs(ref_dir, exist_ok=True)
+
     saved_inputs: set[tuple[int, float]] = set()
-    if save_wavs:
-        os.makedirs(input_dir, exist_ok=True)
 
     # Dış döngü: model (load bir kez)
     for mi, model_class in enumerate(model_classes, start=1):
@@ -246,18 +300,33 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     noisy = mix_at_snr(clean, noise, snr)
 
-                    # Bu (pair, snr) için clean + noisy mix'i ilk kez görüyorsak kaydet
                     snr_tag = (
                         f"{int(snr):+d}dB" if float(snr).is_integer() else f"{snr:+.1f}dB"
                     )
-                    if save_wavs and (pi, snr) not in saved_inputs:
+                    scene = _scene_from_path(noise_path)
+                    lang = _lang_from_path(clean_path)
+
+                    # Bu (pair, snr) için clean + noisy mix'i ilk kez görüyorsak kaydet.
+                    # samples strategy'sinde sadece seçilen pair/snr'lar için.
+                    should_save_input = (
+                        args.save_strategy == "all"
+                        or (args.save_strategy == "samples"
+                            and is_selected(pi, snr, selected_samples))
+                    )
+                    if should_save_input and (pi, snr) not in saved_inputs:
+                        if args.save_strategy == "all":
+                            clean_name = f"pair{pi:02d}_clean.wav"
+                            noisy_name = f"pair{pi:02d}_snr{snr_tag}_noisy.wav"
+                        else:  # samples
+                            clean_name = f"clean_pair{pi:02d}_{lang}.wav"
+                            noisy_name = f"noisy_{scene}_snr{snr_tag}.wav"
                         save_audio(
-                            os.path.join(input_dir, f"pair{pi:02d}_clean.wav"),
+                            os.path.join(ref_dir, clean_name),
                             clean,
                             sr=model.sample_rate,
                         )
                         save_audio(
-                            os.path.join(input_dir, f"pair{pi:02d}_snr{snr_tag}_noisy.wav"),
+                            os.path.join(ref_dir, noisy_name),
                             noisy,
                             sr=model.sample_rate,
                         )
@@ -273,12 +342,24 @@ def main(argv: list[str] | None = None) -> int:
                             do_warmup=do_warmup,
                         )
 
-                    # Modelin çıktısını {out_dir}/{model_name}/ altına yaz
-                    if save_wavs and denoised is not None:
-                        model_out_dir = os.path.join(out_dir, model.name)
+                    # Modelin çıktısını kaydet (strategy'ye göre).
+                    should_save_output = (
+                        denoised is not None
+                        and (
+                            args.save_strategy == "all"
+                            or (args.save_strategy == "samples"
+                                and is_selected(pi, snr, selected_samples))
+                        )
+                    )
+                    if should_save_output:
+                        model_out_dir = os.path.join(per_model_root, model.name)
                         os.makedirs(model_out_dir, exist_ok=True)
+                        if args.save_strategy == "all":
+                            out_name = f"pair{pi:02d}_snr{snr_tag}.wav"
+                        else:  # samples
+                            out_name = f"{scene}_snr{snr_tag}.wav"
                         save_audio(
-                            os.path.join(model_out_dir, f"pair{pi:02d}_snr{snr_tag}.wav"),
+                            os.path.join(model_out_dir, out_name),
                             denoised,
                             sr=model.sample_rate,
                         )
