@@ -12,7 +12,7 @@
 
 ## 1. Project Snapshot
 
-**Repo:** https://github.com/MSelmanS/NoiseSupression
+**Repo:** https://github.com/MSelmanS/NoiseSuppression
 **Goal:** Mic-input noise suppression + dominant-speaker selection. Final target is
 an Android service; PC work is for model selection and methodology.
 **Constraint:** Single channel (mono). 16 kHz internal processing pipeline.
@@ -44,7 +44,7 @@ mobile deployment work are still ahead.
 ### 1.2 Current Repo Layout
 
 ```
-NoiseSupression/
+NoiseSuppression/
 ├── config.py              # MODEL_SR=16000, CAPTURE_SR=48000, CHANNELS=1
 ├── audio_io/file_io.py    # load_audio, save_audio
 ├── models/                # BaseDenoiser + 7 wrappers
