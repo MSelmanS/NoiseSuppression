@@ -235,32 +235,93 @@ def _section_heatmaps(df: pd.DataFrame, metric: str = "pesq", label: str = "PESQ
 
 
 def _section_detail_table(df: pd.DataFrame) -> str:
-    """Model × Sahne × SNR ortalama PESQ tablosu."""
-    if "pesq" not in df.columns or "scene" not in df.columns:
+    """Model × Sahne × SNR için tüm metriklerin ortalama tablosu.
+
+    Her metrik için ayrı bir pivot (model+scene satır, snr_db kolon).
+    Sadece sayısal metrik ortalaması — kulak yanıltıcı olduğu için tüm
+    sayısal kanıtı gösteriyoruz.
+    """
+    if "scene" not in df.columns or "snr_db" not in df.columns:
         return ""
-    pivot = df.pivot_table(
-        index=["model", "scene"],
-        columns="snr_db",
-        values="pesq",
-        aggfunc="mean",
-    ).round(3)
-    if pivot.empty:
-        return ""
-    snrs = list(pivot.columns)
-    headers = "".join(f"<th>{s:g} dB</th>" for s in snrs)
-    body = ""
-    for (model, scene), row in pivot.iterrows():
-        cells = "".join(
-            f'<td class="metric-num">{row[s]:.2f}</td>' if pd.notna(row[s]) else "<td>-</td>"
-            for s in snrs
-        )
-        body += f"<tr><td>{escape(str(model))}</td><td>{escape(str(scene))}</td>{cells}</tr>"
-    return f"""
-<h2 id="detail">5. Detay Tablo — Model × Sahne × SNR (PESQ ortalama)</h2>
+
+    # (kolon, başlık, ondalık, yön açıklaması)
+    metrics: list[tuple[str, str, int, str]] = [
+        ("pesq",          "PESQ (algılanan kalite, 1–4.5)",     2, "↑ iyi"),
+        ("stoi",          "STOI (anlaşılabilirlik, 0–1)",       3, "↑ iyi"),
+        ("si_sdr",        "SI-SDR (dB, sinyal/distorsiyon)",    2, "↑ iyi"),
+        ("rtf_mean",      "RTF (işlem/ses süresi)",             3, "↓ iyi"),
+        ("peak_ram_mb",   "Peak RAM (MB)",                       1, "↓ iyi"),
+        ("noisy_rms_db",  "Noisy RMS (dB) — modelin gördüğü",   2, "ref"),
+        ("output_rms_db", "Output RMS (dB) — modelin çıkardığı", 2, "↓ az = bastırma"),
+        ("hf_ratio",      "HF Ratio (>4 kHz koruma oranı)",      4, "↑ daha çok HF detay"),
+    ]
+
+    blocks: list[str] = []
+    for col, label, decimals, dir_note in metrics:
+        if col not in df.columns:
+            continue
+        pivot = df.pivot_table(
+            index=["model", "scene"],
+            columns="snr_db",
+            values=col,
+            aggfunc="mean",
+        ).round(decimals)
+        if pivot.empty:
+            continue
+        snrs = list(pivot.columns)
+        headers = "".join(f"<th>{s:g} dB</th>" for s in snrs)
+        # Tablo renkleri için min/max (NaN dışlanarak)
+        flat = pivot.values.flatten()
+        finite_vals = flat[~pd.isna(flat)]
+        if len(finite_vals) > 1:
+            vmin, vmax = float(finite_vals.min()), float(finite_vals.max())
+        else:
+            vmin, vmax = 0.0, 1.0
+        # Yön: rtf, peak_ram, output_rms (RMS bastırma istenir), noisy_rms (ref) — düşük iyi (rms_db hariç)
+        higher_better = col in ("pesq", "stoi", "si_sdr", "hf_ratio")
+
+        body_lines: list[str] = []
+        last_model = None
+        for (model, scene), row in pivot.iterrows():
+            cells = []
+            for s in snrs:
+                v = row[s]
+                if pd.notna(v) and vmin != vmax and col != "noisy_rms_db":
+                    color = _heatmap_color(float(v), vmin, vmax, higher_better=higher_better)
+                    fmt = f"{{:.{decimals}f}}".format(float(v))
+                    cells.append(
+                        f'<td class="metric-num" style="background:{color};">{fmt}</td>'
+                    )
+                elif pd.notna(v):
+                    fmt = f"{{:.{decimals}f}}".format(float(v))
+                    cells.append(f'<td class="metric-num">{fmt}</td>')
+                else:
+                    cells.append("<td>-</td>")
+            # Model adını sadece değişince yaz (okunabilirlik)
+            model_cell = f"<td><b>{escape(str(model))}</b></td>" if model != last_model else "<td></td>"
+            last_model = model
+            body_lines.append(
+                f"<tr>{model_cell}<td>{escape(str(scene))}</td>{''.join(cells)}</tr>"
+            )
+
+        blocks.append(f"""
+<h3>{escape(label)} <small style="color:#888">— {escape(dir_note)}</small></h3>
 <table>
   <tr><th>Model</th><th>Scene</th>{headers}</tr>
-  {body}
+  {''.join(body_lines)}
 </table>
+""")
+
+    if not blocks:
+        return ""
+
+    return f"""
+<h2 id="detail">5. Detay Tablo — Tüm Metrikler (Model × Sahne × SNR ortalama)</h2>
+<p class="meta">Her metrik için ayrı tablo. Hücre rengi: yeşil = o metrik için iyi,
+kırmızı = kötü. <b>Sayısal kanıt + kulak testi birlikte değerlendirilmeli</b>;
+özellikle PESQ yüksek + HF Ratio düşük olan satırlar Anomaliler bölümünde de
+"over_suppression" olarak işaretleniyor.</p>
+{''.join(blocks)}
 """
 
 
