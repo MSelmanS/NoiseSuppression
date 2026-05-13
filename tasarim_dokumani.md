@@ -165,6 +165,7 @@ Her benchmark çalıştırması kendi zaman damgalı klasörüne yazar — önce
 
 ### Sıradaki
 - [ ] Baskın konuşmacı seçimi modülü (VAD + RMS) — **Pipeline sıralaması: Akış 1 (önce denoise)** kararlaştırıldı (Bölüm 4.4). Aday VAD'ler: Silero / WebRTC / saf enerji.
+- [ ] **`m_medium` profili için veri seti genişletmek** — Profile 50 clean (25 EN + 25 TR) istiyor ama elimizde 10+10=20 var. Şu an `m_medium` = `s_quick` (script max_pairs'ı otomatik kırpıyor). Çözüm seçenekleri: `download_data.py` kotalarını yükseltmek, Türkçe için ek dataset eklemek, ya da profil tasarımını değiştirmek (n_repeats yükseltmek vb.). Detay: `development_task.md` Bölüm 5.
 - [ ] Canlı mikrofon pipeline'ı (real-time test)
 - [ ] Seçilen model(ler)in ONNX/TFLite dönüşümü
 - [ ] Android tarafı için ölçüm ve entegrasyon

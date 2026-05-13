@@ -221,6 +221,11 @@ Tasklar sırayla uygulanacak. Her task acceptance criteria'ları geçince commit
 
 Bu maddeler Tur 2'de yapılmıyor. Selman'ın talebine göre bu listeye eklendi/güncellendi.
 
+- **m_medium profilini gerçek anlamda etkinleştirmek** — Şu an `m_medium` profili `max_pairs=50` (25 EN + 25 TR) istiyor ama dataset'te sadece 10 EN + 10 TR = 20 clean var. `build_mixes --profile m_medium` çalıştırıldığında script otomatik 20'ye düşüyor ve sonuç `s_quick` ile birebir aynı olur (her ikisi de 700 mix üretir). m_medium'u anlamlı kullanmak için:
+  - `scripts/download_data.py` içindeki VCTK/LibriSpeech kotasını 10 → 25 yap (her dil)
+  - Türkçe için yeni bir kaynak ekle (shunyalabs 10 örnek var, daha fazla speaker_id için 25+ çekecek dataset araştır)
+  - Veya farklı bir m_medium tasarımı: `max_pairs=20` ama `n_repeats=5` ve uzun-tekrar metric güvenilirliği odaklı yap
+  - Karar verilince `scripts/profiles.py:PROFILES["m_medium"]` güncellenip `build_mixes --profile m_medium` ile gerçek üretim yapılır.
 - **Mix doğrulama için LLM gözlemci** — Selman spot check yapacak ama "tüm 700 dosyayı dinleyemem" dedi. İleride bir LLM-tabanlı veya sinyal-tabanlı otomatik doğrulayıcı: her mix'in SNR'ı, kırpılma, format hatalarını otomatik kontrol eder, anormal olanları işaretler.
 - **Konuşmacı seçimi modülü (VAD + RMS)** — Tur 3'ün konusu. Pipeline mimarisi: Akış 1 (önce denoise → sonra seçim). Aday VAD'ler: Silero / WebRTC / saf enerji.
 - **Multi-agent değerlendirme sistemi** — Bench sonuçlarını ikinci bir LLM "peer review"-vari değerlendirir.
