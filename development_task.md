@@ -4,271 +4,282 @@
 > - **Claude (chat / claude.ai)** planlamayı yapar, bu dosyayı yazar.
 > - **Claude Code (IDE)** dosyayı okur, taskları sırayla uygular.
 >
-> Bu turun odağı: **kapsamlı çok-değişkenli denoiser benchmark altyapısının veri ve raporlama yönleriyle tamamlanması.** Konuşmacı seçimi modülü bu turun konusu DEĞİL — pipeline'da yeri ayrılır, kendisi sonra eklenir.
+> **Aktif tur: Tur 2 — Pre-built mix üretici ve benchmark adaptasyonu.**
+> **Önceki tur (Tur 1) tamamlandı** ve aşağıda Bölüm 6'da arşivlenmiştir.
 
 ---
 
-## 1. Bu turun bağlamı
+## 1. Tur 2'nin amacı ve gerekçesi
 
-### 1.1 Mevcut durum (kısa özet)
-- Benchmark altyapısı çalışıyor: `BaseDenoiser` arayüzü, 7 model wrapper, `bench_synthetic.py` clean × noise × SNR sweep yapıyor, `n_repeats` ile mean±std hesaplıyor, PESQ/STOI/SI-SDR/RTF/peak RAM ölçülüyor, CSV + XLSX + per-SNR pivot + matplotlib grafikleri üretiliyor.
-- Eksik olan: **gerçek veri seti** (`data/clean/`, `data/noise/` boş veya yer tutucu) ve **kapsamlı rapor formatı** (mevcut çıktı dağınık dosyalar halinde, dinleme/değerlendirme zor).
+Selman, mevcut sentetik veri üretiminden tatmin değil. Mix'ler şu anda `bench_synthetic.py` içinde **bellekte üretiliyor ve doğrudan modele gönderiliyor** — yani diskte saklanmıyor. Sonuç olarak kullanıcı, gürültünün doğru SNR'da eklendiğinden emin olamıyor, mix'leri kulakla doğrulayamıyor.
 
-### 1.2 Bu turun araştırma sorusu
-"Yedi denoiser modelinin **farklı gürültü tiplerinde, farklı SNR seviyelerinde, hem Türkçe hem İngilizce konuşmada** karşılaştırmalı performansı nedir; hangi(leri) mobil/telsiz hedefimiz için en uygun adaydır?"
+**İstenen yeni akış:**
 
-### 1.3 Kullanıcı senaryosu (veri ve test profilinin dayanağı)
-- **Birincil hedef:** Türkçe konuşan kullanıcı, telsiz benzeri cihaz
-- **Sahne ağırlığı:** %80 Türkiye — karışık ama trafik/dış mekan ağırlıklı (motor, sokak, rüzgar) + ofis/kafe/karışık ortamlar
-- **İkincil hedef:** Çok dilli destek için İngilizce de test edilir (literatür kıyaslama + dağıtım dışı performans)
+1. Mix'ler **ayrı bir adımda önceden üretilir** ve `input_data/{profile}/` altına yazılır.
+2. Kullanıcı `input_data/{profile}/` klasöründen birkaç dosyayı rastgele dinleyerek "spot check" yapar.
+3. Spot check tamamsa benchmark çalıştırılır; benchmark **pre-built mix'leri kullanır**, bellekte üretmez.
+4. Pre-built mix yoksa benchmark mevcut akışla (bellekte) devam eder ama önce kullanıcıya sorar.
 
-### 1.4 Önceden kayıt altına alınan hipotez
-Bu hipotez deney **sonuçları görülmeden önce** kayıt altına alındı; rapor onayı/çürütmesini otomatik test edecek.
+Bu sayede:
+- Mix doğruluğu kullanıcı tarafından önden doğrulanabilir.
+- Benchmark koşumları arası **aynı mix dosyaları kullanılır** — tekrar üretilebilirlik artar.
+- Profil tabanlı yeniden kullanım: `s_quick` üretilmişse, `s_smoke` (alt küme) kendi dosyalarını sıfırdan üretmez, var olanlardan kopyalar.
+
+## 2. Bu turun bağlamı
+
+### 2.1 Mevcut durum
+- Tur 1 tamamlandı. Bütün benchmark altyapısı çalışıyor (dataset indirme, profile sistemi, akıllı örnek seçici, anomali yakalama, HTML rapor).
+- Hipotez kayıt altında, otomatik test ediliyor (H1-H4).
+- `bench_synthetic.py` clean + noise klasörlerinden mix'leri bellekte üretiyor.
+
+### 2.2 Hedeflenen son durum
+- `scripts/build_mixes.py` — ayrı bir CLI, mix'leri diske yazar, manifest üretir.
+- `bench_synthetic.py` pre-built mix tespit ederse onları kullanır; yoksa kullanıcıya sorup eski akışı çalıştırır.
+- F5/konsol çalıştırma deneyimi değişmez: her iki script konfigürasyonu interaktif sorar.
+
+### 2.3 Geriye dönük uyumluluk
+- `data/clean/` ve `data/noise/` ham hammadde olarak kalır (Tur 1 Task 1 ile indirildi).
+- Eski test yolu (clean + noise üzerinden bellekte mix) **kaldırılmaz**, fallback olarak kalır.
+- Mevcut profil sistemi (`s_quick`, `s_smoke`, `m_medium`) aynen kullanılır.
+
+---
+
+## 3. Karar özeti (binding)
+
+| Konu | Karar |
+|---|---|
+| **Mix klasörü** | `input_data/{profile_name}/` — örn. `input_data/s_quick/` |
+| **Mix dosya formatı** | `{lang}_{clean_id}__{noise_scene}__snr{XX}.wav` |
+| **Mix kapsamı** | profile parametrelerinden hesaplanır: `max_pairs × scenes × snrs` (rep yok — aynı kombinasyon bir kez yazılır) |
+| **Manifest** | `input_data/{profile}/manifest.csv` — her satır: clean_path, noise_path, noise_offset_sec, target_snr_db, achieved_snr_db, duration_sec, expected_filename |
+| **Profil arası yeniden kullanım** | Aynı (clean, noise, SNR) kombinasyonu başka bir profilde önceden üretilmişse **kopya** alınır, yeniden üretilmez |
+| **build_mixes CLI** | İnteraktif (profil sorar) + flag'ler: `--profile`, `--force`, `--limit` |
+| **bench_synthetic adaptasyonu** | Manifest varsa "pre-built kullanayım mı? [E/h]"; yoksa "bellekte üreteyim mi? [E/h]" |
+| **Idempotency** | İkinci çağrıda mevcut dosyaları yeniden üretmez, "X/Y zaten var, atlanıyor" mesajı verir |
+| **Spot check otomasyonu** | Bu turda **yapılmıyor**; LLM-tabanlı doğrulama gelecek hedefler listesinde kalır |
+
+---
+
+## 4. Tur 2 Task Listesi
+
+Tasklar sırayla uygulanacak. Her task acceptance criteria'ları geçince commit edilir.
+
+---
+
+### Task T2-1 — `build_mixes.py` scripti
+
+- **Why:** Mix'leri önceden diske yazmak ve manifest üretmek için yeni CLI lazım. Mevcut `benchmark/mixer.py` sadece fonksiyon (bellekte mix); bu task onu sarmalayan disk-yazıcı script ekler.
+
+- **Files to touch:**
+  - `scripts/build_mixes.py` (new) — ana CLI
+  - `benchmark/mix_manifest.py` (new) — manifest okuma/yazma yardımcıları
+  - `.vscode/launch.json` — yeni Run konfigürasyonu
+
+- **Approach:**
+  - **CLI argümanları:**
+    - `--profile NAME` — profil adı; verilmezse interaktif olarak sorar (`s_quick` / `s_smoke` / `m_medium`)
+    - `--force` — mevcut dosyaları üzerine yaz, idempotent davranışı atla
+    - `--limit N` — test için, sadece ilk N kombinasyonu üret
+  - **Profil parametreleri:** `scripts/profiles.py`'den okur (zaten var). Profil dict'inden `clean_dir`, `noise_dir`, `snrs`, `max_pairs` alınır. `n_repeats` mix üretiminde **kullanılmaz** (her kombinasyon bir kez yazılır).
+  - **Klasör hazırlığı:** `input_data/{profile}/` yoksa oluştur.
+  - **Mix kombinasyon listesi:**
+    - `clean_dir` altındaki dil klasörlerini gez (`en/`, `tr/`).
+    - Her dilden eşit pay alarak `max_pairs` clean dosya seç (örn. max_pairs=20 → 10 en + 10 tr). Deterministik seçim için seed=42.
+    - `noise_dir` altındaki sahne klasörlerini gez (DEMAND'ın 7 sahnesi). Her sahnenin `ch01.wav`'ı kullanılır.
+    - Tüm (clean, noise, snr) kombinasyonları: `max_pairs × 7 × 5` — örn. s_quick için 700 dosya.
+  - **Her kombinasyon için:**
+    - `audio_io.file_io.load_audio` ile clean'i yükle (16 kHz mono).
+    - Noise'u yükle, clean'in uzunluğuna göre **rastgele offset'ten kırp** (seed deterministik). Offset manifestte kaydedilir.
+    - `benchmark.mixer.mix_at_snr` ile hedef SNR'a karıştır.
+    - Achieved SNR'u ölç (gerçekleşen SNR ile hedef arası fark; mixer 0.1 dB tolerans hedefliyor).
+    - Hedef dosya yolu: `input_data/{profile}/{lang}_{clean_id}__{noise_scene}__snr{XX}.wav`. `snr{XX}` formatı: -5 → `-05`, 0 → `00`, 10 → `10` (iki haneli, sayısal sıralanabilir).
+    - `save_audio` ile yaz.
+  - **Profil arası yeniden kullanım:**
+    - Mix yazmadan önce **diğer profil klasörlerinde** aynı dosya adına sahip bir dosya var mı bak (basit dosya adı eşitliği yeterli; clean+noise+snr kombinasyonu dosya adında zaten var).
+    - Varsa kopyala (`shutil.copy2`), tekrar üretme.
+    - Hangi profilden kopyalandığını manifest'in `source` sütununda işaretle (`generated` veya `copied_from:s_quick`).
+  - **Manifest yazımı:**
+    - `manifest.csv` — UTF-8, başlık satırı, virgülle ayrılmış.
+    - Sütunlar: `idx`, `lang`, `clean_id`, `clean_path`, `noise_scene`, `noise_path`, `noise_offset_sec`, `target_snr_db`, `achieved_snr_db`, `duration_sec`, `mix_filename`, `source`.
+  - **Idempotency:**
+    - Çalıştırma başında mevcut `manifest.csv` varsa oku, hangi `mix_filename`'lar var listele.
+    - Her kombinasyon için: dosya **ve manifest satırı** mevcutsa atla. Eksik olan satırlar için tekrar üret.
+    - `--force` ile bu kontrolü atla.
+  - **İlerleme:** tqdm ile progress bar. Toplam sayı = profil için tüm kombinasyon adedi.
+  - **Konsol özeti:** sonda yazılan/atlanan/kopyalanan dosya sayısı + manifest yolu.
+
+- **Acceptance criteria:**
+  - [ ] `python -m scripts.build_mixes --profile s_smoke` çalıştırınca `input_data/s_smoke/` altında profil parametrelerine uygun sayıda wav (`max_pairs × scenes × snrs`) ve `manifest.csv` oluşur
+  - [ ] Manifest'in her satırı diskte gerçek bir dosyaya işaret eder; eksik dosya yoktur
+  - [ ] `python -m scripts.build_mixes` (argümansız) profil seçim sorusu açar; bilinmeyen profilde anlamlı hata verir
+  - [ ] İkinci çağrıda "X/Y zaten var, atlanıyor" mesajıyla 5 saniyenin altında biter
+  - [ ] `--force` flag'i ile tüm dosyalar üzerine yazılır
+  - [ ] `--limit 10` ile sadece 10 mix üretilir
+  - [ ] `s_smoke` üretildikten sonra `s_quick` çalıştırılırsa, `s_smoke`'taki dosyalar (eğer dosya adı eşleşirse) kopyalanır, yeniden üretilmez; manifest `source` sütununda işaretlenir
+  - [ ] Achieved SNR ile target SNR arası fark < 0.5 dB (mixer hatası yoksa)
+
+- **Out of scope:**
+  - Kullanıcıya mix'leri dinletme arayüzü (manuel klasör açma yeterli)
+  - Otomatik mix doğrulama (LLM tabanlı gözlemci — gelecek hedef)
+  - Profil dışı SNR seviyeleri (sabit: profil ne diyorsa o)
+
+- **Depends on:** Tur 1 Task 1 (dataset indirme tamamlanmış olmalı)
+
+---
+
+### Task T2-2 — `bench_synthetic.py` pre-built mix desteği
+
+- **Why:** Pre-built mix'ler hazırsa benchmark onları kullanmalı; yoksa kullanıcıya sorup mevcut bellek-mix akışına düşmeli.
+
+- **Files to touch:**
+  - `scripts/bench_synthetic.py` — pre-built tespit + manifest okuma + ses yükleme yolu
+  - `benchmark/mix_manifest.py` — Task T2-1'de yaratılan modül, burada `load_manifest()` fonksiyonu kullanılır
+
+- **Approach:**
+  - **Akış değişikliği:** Profil seçimi sonrası, mevcut akışa şu kontrol eklenir:
+    ```
+    1. input_data/{profile}/manifest.csv var mı?
+       Evet → "Pre-built mix bulundu ({N} dosya). Bunları kullanayım mı? [E/h]" sor.
+              E (varsayılan) → manifest'i oku, her satır için mix dosyasını yükleyip modele ver. Bellekte mix yapma.
+              h → bellekte üret (mevcut akış).
+       Hayır → "Pre-built mix yok. Bellekte üreteyim mi? [E/h]" sor.
+              E (varsayılan) → mevcut akış.
+              h → çıkış kodu 0 ile bilgilendirici mesaj ("Önce 'python -m scripts.build_mixes --profile {profile}' çalıştırın").
+    ```
+  - **CLI flag:** `--use-prebuilt {auto, yes, no}`:
+    - `auto` (varsayılan): interaktif soru
+    - `yes`: pre-built varsa kullan, yoksa hata
+    - `no`: pre-built varsa bile bellekte üret
+  - **Pre-built kullanım yolu:**
+    - `load_manifest("input_data/{profile}/manifest.csv")` çağrısı satırları döner
+    - Her satır için:
+      - `mix_filename` ile `noisy = load_audio(...)`
+      - Clean referansı: `clean_path` sütununu kullan, `clean = load_audio(...)`
+      - Sahne ve SNR doğrudan manifest'ten okunur, hesaplama yok
+    - Sonra her model bu (noisy, clean) çiftine `n_repeats` kez uygulanır (rep yine bench içinde, ama mix bir kere yüklenir, modeller arası ortak kalır)
+  - **Performans optimizasyonu:** Mix dosyaları bellekte cache'lenir; aynı mix farklı modeller için tekrar diskten okunmaz. Bu zaten mevcut akışta benzer şekilde işliyor; cache yapısı korunur.
+  - **Hata durumu:** Manifest var ama bazı dosyalar eksik → exit, hangi dosyaların eksik olduğunu listele, `build_mixes` ile tamamla mesajı.
+
+- **Acceptance criteria:**
+  - [ ] `python -m scripts.bench_synthetic --profile s_smoke` (manifest yokken) "pre-built yok, bellekte üreteyim mi" sorar
+  - [ ] `build_mixes --profile s_smoke` çalıştırıldıktan sonra `bench_synthetic --profile s_smoke` "pre-built var, kullanayım mı" sorar
+  - [ ] `--use-prebuilt yes` ile etkileşimsiz pre-built kullanımı çalışır
+  - [ ] `--use-prebuilt no` ile mevcut bellek-mix akışı çalışır
+  - [ ] Pre-built ile çalıştırma ile bellek-mix ile çalıştırma **aynı sayıda ölçüm** üretir (manifest dosya sayısı × n_repeats × n_models)
+  - [ ] Pre-built ile çalıştırma ile bellek-mix ile çalıştırma sonuçları (PESQ, STOI, SI-SDR ortalamaları) **yaklaşık aynı** olur — birebir aynı değil çünkü noise offset random olabilir (mixer seed kullanıyorsa birebir, kullanmıyorsa yakın)
+  - [ ] Manifest'te listelenen ama diskte olmayan dosya varsa anlamlı hata: "Manifest 700 dosya bekliyor ama 698 bulundu. Eksikler: ..."
+  - [ ] Mevcut tüm Tur 1 acceptance criteria'ları geçmeye devam eder (regresyon yok)
+
+- **Out of scope:**
+  - Manifest'in başka bir formatta (JSON, Parquet) desteklenmesi
+  - Bellek-mix akışını tamamen kaldırmak (fallback olarak kalır)
+
+- **Depends on:** Task T2-1
+
+---
+
+### Task T2-3 — F5/Run konfigürasyonu ve README
+
+- **Why:** Yeni `build_mixes` adımı kullanıcı akışının başına eklendi. Yeni gelen biri (veya 3 ay sonraki Selman) bu adımı atlayıp bench koştuğunda kafası karışmasın.
+
+- **Files to touch:**
+  - `.vscode/launch.json` — yeni konfigürasyon
+  - `README.md` — Hızlı Başlangıç bölümü güncelle
+  - `tasarim_dokumani.md` — Yol Haritası "Tamamlanan" bölümüne ekleme
+
+- **Approach:**
+  - `.vscode/launch.json` yeni konfigürasyonlar:
+    - **build_mixes (interactive profile)** — `python -m scripts.build_mixes`, profil sorusu açar
+    - **build_mixes (profile: s_quick)** — direkt s_quick üretir
+    - **build_mixes (profile: s_smoke — fast)** — direkt s_smoke üretir
+  - README.md "Hızlı Başlangıç" bölümünde adım sırası:
+    1. Kurulum
+    2. Veri indirme (`scripts.download_data`)
+    3. **(YENİ) Mix üretimi (`scripts.build_mixes --profile s_smoke`)** — kullanıcı klasörü açıp birkaç dosyayı dinleyerek SNR doğruluğunu kontrol eder
+    4. Smoke test (`scripts.bench_synthetic --profile s_smoke`)
+    5. Tam koşum (`scripts.bench_synthetic --profile s_quick`)
+    6. Raporu açma
+  - README.md'de yeni bir "Mix doğrulama" mini bölümü: kullanıcıya "klasörden 3-5 dosya rastgele dinleyin, gürültü doğru seviyede karışmış mı emin olun" talimatı.
+  - `tasarim_dokumani.md` Tamamlanan listesine yeni satırlar:
+    - `[x] Pre-built mix üretici (build_mixes.py) — input_data/{profile}/ altında manifest + wav`
+    - `[x] bench_synthetic pre-built mix desteği (--use-prebuilt auto/yes/no)`
+    - `[x] Profil arası mix yeniden kullanımı (kopya optimizasyonu)`
+
+- **Acceptance criteria:**
+  - [ ] `.vscode/launch.json`'da build_mixes için en az 2 konfigürasyon (interaktif + direkt s_smoke)
+  - [ ] README.md adımları yeni 5 numaralı (yenisiyle 6 numaralı) akışı yansıtır
+  - [ ] `tasarim_dokumani.md` güncel
+  - [ ] Bir başkası README.md'yi takip ederek baştan sona koşumu hatasız tamamlayabilir
+
+- **Out of scope:** Çeviri (İngilizce README); video tutorial; ek diagram
+
+- **Depends on:** Task T2-1, Task T2-2
+
+---
+
+## 5. Gelecek hedefleri (Tur 2'nin KONUSU DEĞİL, hatırlatma)
+
+Bu maddeler Tur 2'de yapılmıyor. Selman'ın talebine göre bu listeye eklendi/güncellendi.
+
+- **Mix doğrulama için LLM gözlemci** — Selman spot check yapacak ama "tüm 700 dosyayı dinleyemem" dedi. İleride bir LLM-tabanlı veya sinyal-tabanlı otomatik doğrulayıcı: her mix'in SNR'ı, kırpılma, format hatalarını otomatik kontrol eder, anormal olanları işaretler.
+- **Konuşmacı seçimi modülü (VAD + RMS)** — Tur 3'ün konusu. Pipeline mimarisi: Akış 1 (önce denoise → sonra seçim). Aday VAD'ler: Silero / WebRTC / saf enerji.
+- **Multi-agent değerlendirme sistemi** — Bench sonuçlarını ikinci bir LLM "peer review"-vari değerlendirir.
+- **Otomatik kendini iyileştirme döngüsü** — Sistem zayıf çıkan senaryolarda hyperparameter/model seçimini bizzat ayarlar.
+- **Canlı mikrofon pipeline** — Real-time test, streaming inference.
+- **ONNX/TFLite dönüşüm** — Kazanan modelin mobile için export'u.
+- **Android tarafı ölçümleri** — Gerçek cihazda RTF, RAM, latency.
+
+---
+
+## 6. Tur 1 — Arşiv (TAMAMLANDI)
+
+> Bu bölüm Tur 1'in özetidir; tasklar tamamlandı, kod tabanına işlendi.
+
+### 6.1 Tur 1'in odağı
+Kapsamlı çok-değişkenli denoiser benchmark altyapısının veri ve raporlama yönleriyle tamamlanması. Konuşmacı seçimi modülü Tur 1'in konusu değildi.
+
+### 6.2 Tur 1'in araştırma sorusu
+"Yedi denoiser modelinin farklı gürültü tiplerinde, farklı SNR seviyelerinde, hem Türkçe hem İngilizce konuşmada karşılaştırmalı performansı nedir; hangi(leri) mobil/telsiz hedefimiz için en uygun adaydır?"
+
+### 6.3 Tur 1'in hipotezi
+Bu hipotez sonuçlar görülmeden önce kayıt altına alındı; rapor onayı/çürütmesini otomatik test ediyor.
 
 > Klasik/hafif yöntemler (spectral_subtraction, RNNoise) düşük SNR ve konuşmacı gürültüsü gibi karmaşık ortamlarda zorlanır. DL modelleri (DeepFilterNet, Demucs varyantları) fan/motor/uğultu gibi sürekli gürültülerde daha iyi sonuç verir. MetricGAN+ bazı düşük SNR senaryolarında gürültüyü agresif bastırırken konuşma doğallığını bozar. Kafe/kalabalık konuşma gibi hedef konuşmaya benzeyen gürültülerde tüm modeller zorlanır; model farkları en net burada ortaya çıkar.
 
-Hipotez 4 alt-iddiaya ayrıştırılır (otomatik test için):
-
-- **H1.** SNR ≤ 0 dB'de spectral_subtraction + rnnoise'ın ortalama PESQ'si, DL modellerinin (DFN, Demucs varyantları, MetricGAN+) ortalama PESQ'sinden ≥ 0.3 düşüktür.
+Hipotez 4 alt-iddiaya ayrıştırıldı (otomatik test için):
+- **H1.** SNR ≤ 0 dB'de spectral_subtraction + rnnoise'ın ortalama PESQ'si, DL modellerinin ortalama PESQ'sinden ≥ 0.3 düşüktür.
 - **H2.** Sürekli/sabit gürültü sahnelerinde (DKITCHEN, OOFFICE, TCAR, NPARK) DFN ve Demucs ailesinin ortalama PESQ'si, klasik yöntemlerden ≥ 0.4 yüksektir.
-- **H3.** MetricGAN+ çıkışlarında, en az iki SNR seviyesinde ortalama RMS düşüşü > 8 dB veya HF Energy Ratio < 0.0010 (aşırı agresiflik göstergesi).
-- **H4.** Kafe/kalabalık konuşma sahnesinde (SCAFE, SPSQUARE) tüm modellerin PESQ ortalamaları yakın (max−min < 0.4) — model farkı azalır, ortak zorluk vardır.
+- **H3.** MetricGAN+ çıkışlarında, en az iki SNR seviyesinde ortalama RMS düşüşü > 8 dB veya HF Energy Ratio < 0.0010.
+- **H4.** Kafe/kalabalık konuşma sahnesinde (SCAFE, SPSQUARE) tüm modellerin PESQ ortalamaları yakın (max−min < 0.4).
 
----
+### 6.4 Tur 1 tasklar (özet)
+- ✅ **T1-1** Dataset indirme scripti (VCTK + Common Voice TR + DEMAND 7 sahne)
+- ✅ **T1-2** Profile sistemi (`s_quick`, `s_smoke`, `m_medium`)
+- ✅ **T1-3** Akıllı örnek seçici + `--save-strategy` (`benchmark/sampling.py`)
+- ✅ **T1-4** Anomali yakalama (4 detektör — `benchmark/anomaly.py`)
+- ✅ **T1-5** HTML rapor üreticisi (`benchmark/html_report.py` + `spectrogram.py` + `hypothesis.py`)
+- ✅ **T1-6** Pipeline mimari kararı dokümantasyonu (Akış 1 — önce denoise)
+- ✅ **T1-7** README ve çalıştırma talimatları güncellendi
 
-## 2. Karar özeti (binding)
-
+### 6.5 Tur 1 kararları
 | Konu | Karar |
 |---|---|
 | **Veri stratejisi** | Strateji B: VCTK alt küme + Common Voice TR + DEMAND 7 sahne |
 | **Senaryo** | S: 20 temiz × 7 gürültü × 5 SNR × 3 tekrar = 2100 işlem/model |
-| **SNR seviyeleri** | −5, 0, 5, 10, 15 dB (zaten karar) |
-| **DEMAND sahneleri** | TBUS, TCAR, TMETRO (trafik/araç), SCAFE, SPSQUARE (kalabalık konuşma), OOFFICE (sabit gürültü), NPARK (rüzgar/doğa) |
-| **Temiz konuşma** | 10 İngilizce klip (VCTK) + 10 Türkçe klip (CV-TR) — 50/50 dengeli |
+| **SNR seviyeleri** | −5, 0, 5, 10, 15 dB |
+| **DEMAND sahneleri** | TBUS, TCAR, TMETRO, SCAFE, SPSQUARE, OOFFICE, NPARK |
+| **Temiz konuşma** | 10 İngilizce klip + 10 Türkçe klip |
 | **Rapor formatı** | HTML tek dosya, embedded audio + spektrogram + otomatik hipotez testi |
-| **Dinleme galerisi** | 2 kritik sahne (SCAFE, TCAR) × 2 SNR (−5, 5) × 7 model = 28 örnek |
-| **Anomali yakalama** | Metrik-RMS çelişkisi, yüksek std, beklenmedik düşüş |
-| **Konuşmacı seçimi** | Bu turda EKLENMEYECEK; pipeline mimarisinde yeri ayrılır |
-| **Pipeline akışı** | Akış 1 → önce denoise → sonra konuşmacı seçimi (sonraki tur) |
-| **Hipotez kaydı** | Bu dokümanın 1.4'ünde sabit; rapor otomatik onaylar/çürütür |
+| **Dinleme galerisi** | 2 sahne (SCAFE, TCAR) × 2 SNR (−5, 5) × 7 model = 28 örnek |
+| **Pipeline akışı** | Akış 1 — önce denoise → sonra konuşmacı seçimi |
 
 ---
 
-## 3. Numaralı Task Listesi
+## 7. Handoff Protocol
 
-Tasklar **sırayla** uygulanacak. Her task acceptance criteria'ları geçince commit edilir.
-
----
-
-### Task 1 — Dataset indirme ve hazırlama scripti
-
-- **Why:** `data/clean/` ve `data/noise/` şu an yer tutucu; gerçek benchmark için VCTK alt küme + Common Voice TR + DEMAND sahneleri lazım. Bu adım olmadan bench_synthetic anlamlı çalışmaz.
-- **Files to touch:**
-  - `scripts/download_data.py` (new)
-  - `data/README.md` (new) — dataset kaynakları, lisansları, dosya organizasyonu
-  - `requirements.txt` (eğer ek paket gerekirse — `datasets`, `librosa` vs.)
-- **Approach:**
-  - **VCTK:** `https://datashare.ed.ac.uk/handle/10283/2950` üzerinden veya HuggingFace `datasets` üzerinden. **Alt küme:** 10 farklı konuşmacı (5 erkek + 5 kadın, çeşitli aksanlar), her birinden 1 cümle — toplam 10 dosya. Hedef yol: `data/clean/en/spk{ID}_uttN.wav`
-  - **Common Voice Turkish:** HuggingFace `mozilla-foundation/common_voice_*_0` üzerinden TR alt küme. **Alt küme:** kalite filtresi (up_votes ≥ 2, down_votes == 0) sonrasından 10 dosya, çeşitli konuşmacılar. Hedef yol: `data/clean/tr/spkN_uttN.wav`
-  - **DEMAND:** `https://zenodo.org/records/1227121` üzerinden. **Sadece 7 sahne** indir: TBUS, TCAR, TMETRO, SCAFE, SPSQUARE, OOFFICE, NPARK. Her sahnenin ch01.wav'ı yeterli (1 mikrofon kanalı, ~5 dk). Hedef yol: `data/noise/{SCENE}/ch01.wav`
-  - Tüm sesleri **16 kHz mono float32**'ye normalize ederek kaydet (`audio_io.file_io.load_audio` ile yükle, `save_audio` ile yaz).
-  - Script idempotent: ikinci çağrıda mevcut dosyaları yeniden indirmez.
-  - İndirme hatalarında nazikçe başarısız ol, hangi dosyanın inmediğini logla, diğerlerine devam et.
-- **Acceptance criteria:**
-  - [ ] `python -m scripts.download_data` çalıştırınca `data/clean/en/` altında 10, `data/clean/tr/` altında 10 wav dosyası oluşur
-  - [ ] `data/noise/` altında 7 alt klasör (sahne adıyla) ve her birinde `ch01.wav` oluşur
-  - [ ] Tüm wav dosyaları 16 kHz mono (kontrol: `soundfile.info`)
-  - [ ] `data/README.md` her dataset için kaynak URL, lisans, dosya sayısı ve organizasyonu açıklar
-  - [ ] Script ikinci çalıştırmada "zaten var, atlanıyor" mesajıyla hızlıca çıkar
-- **Out of scope:** Tüm VCTK / CV / MUSAN'ı indirmek; başka sahne eklemek; veri augmentasyonu
-- **Depends on:** None
-
----
-
-### Task 2 — Bench_synthetic için varsayılan dataset profili
-
-- **Why:** Mevcut `bench_synthetic.py` CLI argümanlarıyla çalışıyor. Senaryo S için her seferinde uzun argüman yazmak yerine, bu çalışmanın "kanonik konfigürasyonu" tek yerde tanımlı olmalı.
-- **Files to touch:**
-  - `scripts/bench_synthetic.py` → `--profile` argümanı ekle
-  - `scripts/profiles.py` (new) — profile sözlükleri
-  - `.vscode/launch.json` — yeni profile çağrısı için config
-- **Approach:**
-  - `profiles.py` içine `PROFILES` sözlüğü: her profile bir dict (clean_dir, noise_dir, snrs, max_pairs, n_repeats, models).
-  - Tanımlanacak profiller:
-    - **`s_quick`** — Senaryo S (20 temiz × 7 noise × 5 SNR × 3 rep, all models)
-    - **`s_smoke`** — debug için ufak (4 temiz × 2 noise × 2 SNR × 1 rep, fast models only)
-    - **`m_medium`** — Senaryo M (50 × 7 × 5 × 3) — gelecekte gerekirse
-  - `bench_synthetic.py`'ye `--profile NAME` argümanı eklenir. Verilirse profile dict'inden değerleri okur; ayrı CLI argümanları override edebilir.
-  - Profile seçilince konsola net log: "Profile=s_quick, ~2100 işlem/model, tahmini süre 30-60dk".
-- **Acceptance criteria:**
-  - [ ] `python -m scripts.bench_synthetic --profile s_smoke` 5 dakikadan kısa sürede tamamlanır
-  - [ ] `python -m scripts.bench_synthetic --profile s_quick` ile S senaryosu çalışır
-  - [ ] Profil overrides çalışır: `--profile s_quick --max-pairs 10` 20 yerine 10 pair kullanır
-  - [ ] Profile bilinmiyorsa anlamlı hata mesajı
-- **Out of scope:** Yeni model eklemek; metrik değiştirmek
-- **Depends on:** Task 1
-
----
-
-### Task 3 — Akıllı örnek seçici (28 dinleme örneği için)
-
-- **Why:** Senaryo S çalıştığında 14.700 wav dosyası üretilebilir. Hepsini diskte tutmak gereksiz. Bunun yerine sadece **rapor için seçilmiş 28 örneği** kaydedip kalanları (hatta hiç dosyaya yazmadan) çöpe atalım.
-- **Files to touch:**
-  - `benchmark/sampling.py` (new) — örnek seçici mantığı
-  - `scripts/bench_synthetic.py` — kaydetme kararı (hangi örnekleri tutar)
-- **Approach:**
-  - Yeni argüman `--save-strategy {all, samples, none}`:
-    - `all` — mevcut davranış, hepsini kaydet (gereksiz disk yükü)
-    - `samples` — sadece dinleme örnekleri için seçilen kombinasyonları kaydet (varsayılan)
-    - `none` — hiç kaydetme, sadece metrikleri tut
-  - `sampling.py` içinde fonksiyon: `pick_listening_samples(scenes, snrs, models)`. Hangi (sahne, snr, model, pair) kombinasyonlarının saklanacağını döndürür:
-    - Kritik sahneler: **SCAFE** ve **TCAR** (hipotezdeki en bilgilendirici sahneler)
-    - Kritik SNR'lar: **−5 dB** ve **5 dB** (en zor + orta zorluk)
-    - Her kombinasyondan 1 pair seçilir (deterministik, seed=42)
-    - Bu da 2 × 2 × 7 = 28 ses → 28 dosya
-  - Ek olarak her **gürültülü mix** ve **temiz referans** dosyası da bir kez kaydedilir (model bağımsız). Yani input dosyaları: 2 sahne × 2 SNR × 1 pair = 4 noisy mix + 1 clean reference = **toplam 5 input dosyası**.
-  - Çıktı klasör yapısı:
-    ```
-    output/bench_synthetic_YYYYMMDD_HHMMSS/
-    ├── samples/
-    │   ├── _reference/
-    │   │   ├── clean_pair0_en.wav
-    │   │   ├── noisy_SCAFE_snr-5dB.wav
-    │   │   └── ... (4 noisy mix)
-    │   └── {model_name}/
-    │       └── SCAFE_snr-5dB.wav   (her modelden 4 çıktı)
-    ├── results_raw.csv
-    ├── results_raw.xlsx
-    ├── results_per_snr.xlsx
-    └── plot_*.png
-    ```
-- **Acceptance criteria:**
-  - [ ] `--save-strategy samples` ile `output/.../samples/` altında en fazla 28 + 5 dosya bulunur (toplam ≤ 33 wav)
-  - [ ] `--save-strategy none` ile hiç wav kaydedilmez, sadece raporlar
-  - [ ] `--save-strategy all` mevcut davranışla aynı (geriye uyumluluk)
-  - [ ] Aynı seed=42 ile çalıştırma seçilen pair'ları tekrarlanabilir biçimde verir
-- **Out of scope:** Spektrogram üretimi (Task 5'te)
-- **Depends on:** Task 2
-
----
-
-### Task 4 — Anomali yakalama mantığı
-
-- **Why:** Sayısal metrikler yanıltabilir (MetricGAN+ örneği → PESQ iyi ama ses kötü). Otomatik bir "şüpheli sonuç" listesi rapora ek değer katar.
-- **Files to touch:**
-  - `benchmark/anomaly.py` (new) — anomali detektörleri
-  - `benchmark/report.py` — anomali listesini rapora gömme
-- **Approach:**
-  - Şu kuralları uygula (sonuç dataframe üzerinde):
-    1. **PESQ-RMS çelişkisi:** PESQ ≥ mean(PESQ) + 0.3 ama o satırın temiz çıktısının RMS'i orijinal noisy'nin RMS'inden 6 dB+ düşük → "Skor iyi ama ses kırpılmış" anomalisi
-    2. **Yüksek varyans:** Aynı (model, scene, snr) kombinasyonunda PESQ std > 0.5 → "Tutarsız davranış" anomalisi
-    3. **Beklenen düzenden sapma:** SNR arttıkça PESQ artmalı; ardışık iki SNR'da PESQ düşerse → "Anormal trend" anomalisi
-    4. **MetricGAN-tipi aşırı bastırma:** HF Ratio < 0.0010 veya çıktı RMS < orijinal − 10 dB → "Aşırı agresif" anomalisi
-  - Her anomalili satır için: (model, scene, snr, pair, anomaly_type, severity, related_metrics) içeren bir kayıt üret.
-  - HTML raporunda ayrı bir "Anomaliler" bölümünde göster (Task 5'te birleşecek).
-- **Acceptance criteria:**
-  - [ ] `detect_anomalies(results_df)` çağrısı bir DataFrame döner; her satır anomali türü ve ilgili satıra referans içerir
-  - [ ] Senaryo S sonuçları üzerinde çalıştırıldığında en az 1, en fazla 50 anomali yakalanır (eşik kalibrasyonu)
-  - [ ] Birim test: yapay PESQ-RMS çelişkisi içeren mock DataFrame'de anomali doğru yakalanır
-- **Out of scope:** Anomaliyi otomatik düzeltme; ek metrik ekleme
-- **Depends on:** Task 2
-
----
-
-### Task 5 — HTML rapor üreticisi
-
-- **Why:** Mevcut çıktı (CSV + XLSX + ayrı PNG'ler) dağınık. Tek dosyada tüm metrikleri + embedded audio + spektrogram + hipotez testi + anomalileri sunan HTML rapor lazım.
-- **Files to touch:**
-  - `benchmark/html_report.py` (new) — ana üretici
-  - `benchmark/spectrogram.py` (new) — spektrogram PNG'lerini üreten yardımcı
-  - `benchmark/hypothesis.py` (new) — Bölüm 1.4'teki H1-H4 otomatik test
-  - `scripts/bench_synthetic.py` — bench sonunda html_report çağrısı
-- **Approach:**
-  - **Tek HTML dosya**, audio dosyaları ve PNG'ler **base64 embedded** (rapor tek dosya olarak paylaşılabilsin). Toplam dosya boyutu hedefi: < 25 MB.
-  - **Şablon:** Jinja2 yerine f-string + heredoc; basit tutalım, harici şablon dosyası yok.
-  - **Bölümler (sırayla):**
-    1. **Başlık & meta** — deney tarihi, profile adı, dataset, model listesi, hipotez metni (1.4'ten)
-    2. **Liderlik tablosu** — her metrik için (PESQ, STOI, SI-SDR, RTF, peak_RAM) model sıralaması ve ortalamalar
-    3. **Hipotez testi** — H1-H4 için tek tek "DOĞRULANDI / KISMEN / ÇÜRÜTÜLDÜ" + dayanak rakamlar (`benchmark.hypothesis` üretir)
-    4. **Sahne × SNR ısı haritaları** — her model × metrik için, color-coded HTML tabloları
-    5. **Detay tabloları** — model × sahne × SNR ortalama ± std (mevcut per-SNR XLSX'in HTML versiyonu)
-    6. **Dinleme galerisi** — 28 örnek, her biri için:
-       - Sol: orijinal gürültülü `<audio controls>` + spektrogram PNG
-       - Sağ: temizlenmiş `<audio controls>` + spektrogram PNG
-       - Altta: o örneğin PESQ/STOI/SI-SDR değerleri
-    7. **Anomaliler** — Task 4 çıktısı tablo halinde
-    8. **Grafikler** — PESQ vs SNR (model-cluster), RTF vs model bar chart, peak_RAM bar chart (mevcut PNG'ler embedded)
-  - Spektrogram: `librosa.feature.melspectrogram` + `librosa.display.specshow` ile log-mel spektrogram (256 mel bins, hop 256). Renk skalası tüm spektrogramlarda aynı olsun (vmin/vmax dataset minmax) — modeller arası gözle kıyas yapılabilsin.
-  - Hipotez testi otomatik kurallı: Bölüm 1.4'teki H1-H4 koşulları kod halinde; her biri için sonuç dict'i {iddia: H1, status: VERIFIED/PARTIAL/REJECTED, evidence: {...}}.
-- **Acceptance criteria:**
-  - [ ] Senaryo S sonunda `output/.../report.html` üretilir, < 25 MB
-  - [ ] Tarayıcıda açıldığında 8 bölüm de görünür ve gezinilebilir
-  - [ ] 28 ses örneği play butonuyla çalınabilir
-  - [ ] 28 örnek için spektrogram (orijinal + temiz) yan yana görünür
-  - [ ] Hipotez testi her 4 alt-iddiayı sayısal kanıtla işaretler
-  - [ ] Rapor başka bir cihaza taşınınca (sadece HTML, ek dosya yok) bozulmadan açılır
-- **Out of scope:** İnteraktif grafikler (plotly/bokeh — bu turda statik PNG yeterli); LLM-destekli yorumlar (gelecek hedef)
-- **Depends on:** Task 3, Task 4
-
----
-
-### Task 6 — Pipeline mimari kararını dokümante et
-
-- **Why:** Konuşmacı seçimi bu turda yazılmıyor ama gelecek için mimari karar şimdi kayıtlı olmalı. Aksi halde sonraki turda "denoise mi önce, VAD mı önce" tartışması tekrarlanır.
-- **Files to touch:**
-  - `tasarim_dokumani.md` — Bölüm 4'e ek "Pipeline Sıralaması" alt-bölümü
-  - `pipeline/__init__.py` (new) — boş paket, placeholder
-  - `pipeline/README.md` (new) — Akış 1 prensibinin kısa açıklaması, BaseDenoiser → BaseSpeakerSelector arayüz iskeleti taslağı (yorum olarak)
-- **Approach:**
-  - Tasarım dokümanı 4.4 olarak: "Pipeline Sıralaması — Akış 1: önce denoise → sonra konuşmacı seçimi. Gerekçe: temiz ses üzerinde VAD daha güvenilir karar verir; mobil senaryoda 'yanlış konuşmacı seçimi' kullanıcı tarafından doğrudan fark edilen bir ürün hatasıdır; CPU israfı (denoiser tüm sese uygulanır) kabul edilebilir çünkü model kapsama alanı tüm akış zaten."
-  - `pipeline/README.md` Claude Code'a hatırlatma: "Konuşmacı seçimi modülü `BaseSpeakerSelector` arayüzünden türeyecek (load + process(audio, vad_segments) -> selected_audio); ileride yazılacak."
-- **Acceptance criteria:**
-  - [ ] `tasarim_dokumani.md` 4.4 bölümünü içerir; "Sıradaki" listesinde "Pipeline sıralaması: Akış 1 (önce denoise)" notu var
-  - [ ] `pipeline/` klasörü oluşturulmuş, içinde README ve boş `__init__.py` var
-- **Out of scope:** Konuşmacı seçimi modülünü yazmak (bu sonraki turun konusu)
-- **Depends on:** None (paralel uygulanabilir, Task 1-5'ten önce de sonra da fark etmez)
-
----
-
-### Task 7 — README ve çalıştırma talimatları güncelle
-
-- **Why:** Yeni dataset indirme, profile sistemi, HTML raporu ortaya çıktı. Yeni bir kullanıcı (veya 3 ay sonraki Selman) hangi komutla ne yapılır anlamalı.
-- **Files to touch:**
-  - `README.md` (new veya update) — proje kök README
-  - `tasarim_dokumani.md` — yol haritası güncelle
-- **Approach:**
-  - README'de şu akış yazılı olsun:
-    1. Kurulum: `pip install -r requirements.txt`
-    2. Veri indirme: `python -m scripts.download_data`
-    3. Hızlı test: `python -m scripts.bench_synthetic --profile s_smoke`
-    4. Tam koşum: `python -m scripts.bench_synthetic --profile s_quick`
-    5. Raporu açma: `output/.../report.html` tarayıcıda
-  - Tasarım dokümanı "Tamamlanan" listesinde yeni eklenen şeyleri işaretle, "Sıradaki" listesinde konuşmacı seçimi vurgulanır
-- **Acceptance criteria:**
-  - [ ] README.md sıfırdan bilgisayara kurulan biri için adım adım komut listesi içerir
-  - [ ] tasarim_dokumani.md güncel
-- **Out of scope:** API dokümanı; örnek notebooks
-- **Depends on:** Task 1-5 tamamlandıktan sonra
-
----
-
-## 4. Gelecek hedefleri (bu turun KONUSU DEĞİL, kaydedilsin)
-
-Aşağıdaki maddeler bu turun planında YOK. Hatırlatma için yazıldı, gelecek turlarda ele alınacak.
-
-- **Konuşmacı seçimi modülü** (VAD + RMS) — bir sonraki tur. `pipeline/speaker_selector.py` ve `BaseSpeakerSelector` ile.
-- **Multi-agent değerlendirme sistemi** — Selman'ın fikri: deney sonuçlarını ikinci bir LLM "peer review"-vari değerlendirir, üçüncü bir LLM (sen?) ikisi arasında hakem rolü oynar. Otomatik kalite kontrol katmanı; model seçim kararını daha güvenilir hale getirir. Geçici isim: "Agentic Evaluation Loop".
-- **Otomatik kendini iyileştirme döngüsü** — Selman'ın fikri: sistem belirli bir senaryoda zayıf çıkıyorsa hyperparameter veya model seçimini bizzat kendi ayarlar (örn. SNR < 0'da otomatik daha güçlü modele geçer).
-- **Canlı mikrofon pipeline** — real-time test, streaming inference.
-- **ONNX/TFLite dönüşüm** — kazanan modelin mobile için export'u.
-- **Android tarafı ölçümleri** — gerçek cihazda RTF, RAM, latency.
-
----
-
-## 5. Handoff Protocol
-
-1. **Claude (chat) → GitHub:** bu dosya `master`'a commit edilir.
-2. **Selman → Claude Code:** "şunları yap" der.
-3. **Claude Code:** sırayla taskları uygular, her birini ayrı commit, acceptance criteria geçerse devam.
-4. **Selman + Claude (chat):** Task 5 sonundaki HTML raporu birlikte yorumlar, hipotez sonuçlarını değerlendirir.
-5. Bir sonraki turun planlamasına (konuşmacı seçimi) Claude (chat) bu dosyayı arşivler, yeni Plan bölümünü doldurur.
+1. **Claude (chat) → GitHub:** Bu dosya `master`'a commit edilir.
+2. **Selman → Claude Code:** "Tur 2 tasklarını sırayla yap" der.
+3. **Claude Code:** T2-1, T2-2, T2-3'ü sırayla uygular, her birini ayrı commit, acceptance criteria geçerse devam.
+4. **Selman:** Task T2-1 tamamlandıktan sonra `input_data/s_smoke/` klasörünü açıp birkaç dosyayı dinleyerek spot check yapar. Mix'lerden tatmin olmazsa parametre ayarı için Claude (chat)'e geri döner.
+5. **Selman + Claude (chat):** T2-3 tamamlandıktan sonra bench koşulur, HTML raporu birlikte yorumlanır.
+6. Bir sonraki tur (Tur 3 — konuşmacı seçimi) planlamasına Claude (chat) bu dosyayı arşivler, yeni Plan bölümünü doldurur.
