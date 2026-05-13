@@ -160,8 +160,9 @@ Her benchmark çalıştırması kendi zaman damgalı klasörüne yazar — önce
 - [x] Tek-dosya HTML rapor (embedded audio + spektrogram + heatmap) — `benchmark/html_report.py`
 - [x] Pipeline sıralaması kararı (Akış 1: önce denoise → sonra konuşmacı seçimi) — `pipeline/README.md`
 - [x] Pre-built mix üretici (`build_mixes.py`) — `input_data/{profile}/` altında manifest + wav
-- [x] `bench_synthetic` pre-built mix desteği (`--use-prebuilt auto/yes/no`)
 - [x] Profil arası mix yeniden kullanımı (kopya optimizasyonu — manifest'te `source` sütunu)
+- [x] **Memory mode tamamen kaldırıldı** — `bench_synthetic` artık manifest gerektiriyor, tek kod yolu. `--use-prebuilt` flag'i ve `_sample_pairs` silindi.
+- [x] **Pink/white sentetik gürültü scene-style entegre edildi** — `data/noise/PINK/ch01.wav` ve `data/noise/WHITE/ch01.wav` (30 sn). DEMAND 7 sahnesine ek olarak toplam 9 sahne. s_quick: 900 mix, s_smoke: 72 mix. Hipotez testleri (H2/H4 listeleri) değişmedi; PINK/WHITE doğal kategorilere düşmüyor, nötr.
 
 ### Sıradaki
 - [ ] Baskın konuşmacı seçimi modülü (VAD + RMS) — **Pipeline sıralaması: Akış 1 (önce denoise)** kararlaştırıldı (Bölüm 4.4). Aday VAD'ler: Silero / WebRTC / saf enerji.

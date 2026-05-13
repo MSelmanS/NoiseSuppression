@@ -217,6 +217,30 @@ Tasklar sırayla uygulanacak. Her task acceptance criteria'ları geçince commit
 
 ---
 
+### 4.4 Tur 2 sonrası ek iyileştirmeler (planlama dışı, uygulandı)
+
+Tur 2 task listesi tamamlandıktan sonra Selman'ın isteğiyle yapıldı, ileride
+Claude (chat) bilsin:
+
+- **Memory mode tamamen kaldırıldı.** `bench_synthetic.py` artık her zaman
+  `input_data/{profile}/manifest.csv`'yi ister. Manifest yoksa açıklayıcı
+  hatayla çıkar: "Önce: python -m scripts.build_mixes --profile X". Eski
+  `_sample_pairs` fonksiyonu ve `--use-prebuilt {auto, yes, no}` flag'i silindi.
+  Avantaj: tek kod yolu, daha az regresyon riski; mix dosyaları her zaman
+  diskte spot-check için hazır.
+- **Pink/white noise scene-style entegre edildi.** Eski `data/noise/pink.wav` ve
+  `data/noise/white.wav` placeholder'ları silindi. Yerine 30 saniye uzunluğunda
+  sentetik gürültü `data/noise/PINK/ch01.wav` ve `data/noise/WHITE/ch01.wav`
+  olarak üretildi (DEMAND ile aynı klasör yapısı). Sonuç: build_mixes artık
+  9 sahne işliyor (TBUS, TCAR, TMETRO, SCAFE, SPSQUARE, OOFFICE, NPARK + PINK,
+  WHITE). s_quick mix sayısı 700 → 900'e çıktı, s_smoke 56 → 72.
+- **Hipotez testlerine etki:** `benchmark/hypothesis.py`'deki H2/H4 sahne
+  listeleri (STATIONARY_SCENES, CROWD_SCENES) **değiştirilmedi** — PINK ve WHITE
+  doğal kategorilere düşmüyor, hipotezde nötr kalıyor. İleride PINK/WHITE için
+  ayrı bir "synthetic baseline" kategorisi açılabilir.
+
+---
+
 ## 5. Gelecek hedefleri (Tur 2'nin KONUSU DEĞİL, hatırlatma)
 
 Bu maddeler Tur 2'de yapılmıyor. Selman'ın talebine göre bu listeye eklendi/güncellendi.

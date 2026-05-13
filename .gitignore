@@ -21,6 +21,7 @@ env/
 output/
 outputs/
 pretrained_models/
+input_data/
 *.wav
 !test/**/*.wav
 

@@ -55,7 +55,7 @@ explorer input_data\s_smoke
 ```
 
 > Daha büyük profil için: `python -m scripts.build_mixes --profile s_quick`
-> (20 clean × 7 noise × 5 SNR = 700 dosya, ~270 MB)
+> (20 clean × 9 noise × 5 SNR = 900 dosya, ~330 MB — 7 DEMAND sahnesi + sentetik PINK & WHITE)
 
 ### 4. Smoke test (5 dakikadan kısa)
 
@@ -64,8 +64,8 @@ python -m scripts.bench_synthetic --profile s_smoke
 ```
 
 Hızlı modellerle (spectral_subtraction, rnnoise, deepfilternet, metricgan_plus)
-küçük bir benchmark yapar. Manifest varsa "pre-built mix kullanayım mı?" sorar
-(Enter = evet). Yoksa bellekte üretir (Adım 3'ü atladıysan otomatik fallback).
+küçük bir benchmark yapar. Pre-built manifest (Adım 3 çıktısı) **zorunludur** —
+yoksa "Önce: python -m scripts.build_mixes --profile s_smoke" diyerek çıkar.
 
 ### 5. Tam koşum — Senaryo S (kanonik)
 

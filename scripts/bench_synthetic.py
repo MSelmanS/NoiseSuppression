@@ -12,14 +12,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import random
 import sys
 import time
 from datetime import datetime
 from glob import glob
 
 from audio_io.file_io import load_audio, save_audio
-from benchmark.mixer import mix_at_snr, extend_to_min_duration
+from benchmark.mixer import extend_to_min_duration
 from benchmark.metrics import PeakRSSTracker, time_it, model_size_mb, param_count
 from benchmark.runner import run_processing_only
 from benchmark.report import (
@@ -104,65 +103,38 @@ def _interactive_setup() -> dict:
     return overrides
 
 
-def _decide_use_prebuilt(
-    profile: str | None,
-    mode: str,
-    input_root: str = "input_data",
-) -> tuple[bool, str | None]:
-    """Pre-built mix kullanılacak mı? (decision, manifest_path).
-
-    mode: 'auto' (interaktif sor), 'yes' (zorunlu), 'no' (zorunlu reddet).
-    Profile None ise zaten pre-built kullanılamaz.
-    """
-    if profile is None or mode == "no":
-        return False, None
-
+def _require_manifest(profile: str | None, input_root: str = "input_data") -> str:
+    """Manifest yolunu döndür; profile yoksa veya manifest yoksa exit."""
+    if profile is None:
+        print(
+            "Hata: bench_synthetic --profile NAME ile çağrılmalı.\n"
+            "Mevcut profiller için: scripts/profiles.py",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     mp = manifest_path_for(profile, root=input_root)
-    has_manifest = os.path.isfile(mp)
-
-    if mode == "yes":
-        if not has_manifest:
-            print(
-                f"Hata: --use-prebuilt yes ama manifest yok: {mp}\n"
-                f"Önce: python -m scripts.build_mixes --profile {profile}",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        return True, mp
-
-    # auto
-    if has_manifest:
-        entries, missing = verify_manifest(mp)
-        if missing:
-            print(
-                f"Uyarı: manifest {len(entries)} dosya bekliyor ama "
-                f"{len(missing)} eksik. Pre-built mod devre dışı."
-            )
-            for m in missing[:5]:
-                print(f"  - {m}")
-            return False, None
-        try:
-            ans = input(
-                f"Pre-built mix bulundu ({len(entries)} dosya). Kullanayım mı? [E/h]: "
-            ).strip().lower()
-        except EOFError:
-            ans = ""
-        return (not ans.startswith("h")), mp
-    else:
-        # Manifest yok; bellek modunda devam
-        try:
-            ans = input(
-                f"Pre-built mix yok ({mp}). Bellekte üreteyim mi? [E/h]: "
-            ).strip().lower()
-        except EOFError:
-            ans = ""
-        if ans.startswith("h"):
-            print(
-                f"Önce: python -m scripts.build_mixes --profile {profile}",
-                file=sys.stderr,
-            )
-            sys.exit(0)
-        return False, None
+    if not os.path.isfile(mp):
+        print(
+            f"Hata: manifest yok: {mp}\n"
+            f"Önce: python -m scripts.build_mixes --profile {profile}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    entries, missing = verify_manifest(mp)
+    if missing:
+        print(
+            f"Hata: manifest {len(entries)} dosya bekliyor ama "
+            f"{len(missing)} eksik. Tekrar inşa et:",
+            file=sys.stderr,
+        )
+        for m in missing[:5]:
+            print(f"  - {m}", file=sys.stderr)
+        print(
+            f"\n  python -m scripts.build_mixes --profile {profile} --force",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return mp
 
 
 def _scene_from_path(noise_path: str) -> str:
@@ -296,17 +268,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="HTML raporu üretme (varsayılan: üret). save-strategy=none ise yine atlanır.",
     )
-    p.add_argument(
-        "--use-prebuilt",
-        choices=["auto", "yes", "no"],
-        default="auto",
-        help=(
-            "Pre-built mix kullanımı (input_data/{profile}/manifest.csv):\n"
-            "  auto — manifest varsa kullanıcıya sor (varsayılan)\n"
-            "  yes  — pre-built varsa kullan, yoksa hata\n"
-            "  no   — bellekte üret, pre-built'i yok say"
-        ),
-    )
+    # --use-prebuilt kaldırıldı: bench_synthetic her zaman pre-built mix kullanır.
+    # Manifest yoksa `python -m scripts.build_mixes --profile X` ile üretilir.
     args = p.parse_args(argv)
 
     # İnteraktif mod: konsoldan profil + seçenekleri sor, args üzerine yaz.
@@ -378,19 +341,6 @@ def _filter_by_duration(paths: list[str], min_seconds: float) -> tuple[list[str]
     return kept, skipped
 
 
-def _sample_pairs(
-    clean_paths: list[str],
-    noise_paths: list[str],
-    max_pairs: int,
-    seed: int,
-) -> list[tuple[str, str]]:
-    """Tüm clean x noise kombinasyonlarından max_pairs kadar rastgele örnek."""
-    all_pairs = [(c, n) for c in clean_paths for n in noise_paths]
-    rng = random.Random(seed)
-    rng.shuffle(all_pairs)
-    return all_pairs[:max_pairs]
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
@@ -447,35 +397,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Hata: {e}", file=sys.stderr)
         return 2
 
-    # Pre-built mix kararı (manifest var + kullanıcı onayı / flag).
-    use_prebuilt, manifest_path = _decide_use_prebuilt(args.profile, args.use_prebuilt)
+    # Pre-built mix yükle (memory mode tamamen kaldırıldı).
+    manifest_path = _require_manifest(args.profile)
+    entries = load_manifest(manifest_path)
+    pair_map: dict[tuple[str, str], int] = {}
+    unique_pairs: list[tuple[str, str]] = []
+    snr_set: set[float] = set()
     prebuilt_lookup: dict[tuple[int, float], str] = {}
-
-    if use_prebuilt and manifest_path:
-        entries = load_manifest(manifest_path)
-        # Manifest'i (clean, noise) çiftlerine grupla; pairs ve snrs üret.
-        pair_map: dict[tuple[str, str], int] = {}
-        unique_pairs: list[tuple[str, str]] = []
-        snr_set: set[float] = set()
-        for e in entries:
-            key = (e.clean_path, e.noise_path)
-            if key not in pair_map:
-                pair_map[key] = len(unique_pairs)
-                unique_pairs.append(key)
-            pi = pair_map[key]
-            snr_set.add(float(e.target_snr_db))
-            prebuilt_lookup[(pi, float(e.target_snr_db))] = os.path.join(
-                os.path.dirname(manifest_path), e.mix_filename
-            )
-        pairs = unique_pairs
-        args.snrs = sorted(snr_set)
-        args.max_pairs = len(pairs)
-        print(
-            f"Pre-built mod: manifest'ten {len(entries)} mix yüklendi "
-            f"({len(pairs)} pair x {len(args.snrs)} SNR)"
+    for e in entries:
+        key = (e.clean_path, e.noise_path)
+        if key not in pair_map:
+            pair_map[key] = len(unique_pairs)
+            unique_pairs.append(key)
+        pi = pair_map[key]
+        snr_set.add(float(e.target_snr_db))
+        prebuilt_lookup[(pi, float(e.target_snr_db))] = os.path.join(
+            os.path.dirname(manifest_path), e.mix_filename
         )
-    else:
-        pairs = _sample_pairs(clean_paths, noise_paths, args.max_pairs, args.seed)
+    pairs = unique_pairs
+    args.snrs = sorted(snr_set)
+    args.max_pairs = len(pairs)
+    print(
+        f"Pre-built manifest: {len(entries)} mix "
+        f"({len(pairs)} pair x {len(args.snrs)} SNR) — {manifest_path}"
+    )
 
     print(f"Clean dosya: {len(clean_paths)}, Noise dosya: {len(noise_paths)}")
     print(f"Seçilen çift: {len(pairs)} (max-pairs={args.max_pairs}, seed={args.seed})")
@@ -581,16 +526,13 @@ def main(argv: list[str] | None = None) -> int:
             for snr in args.snrs:
                 done += 1
                 try:
-                    # Pre-built mod: noisy mix'i diskten oku; aksi halde anlık üret.
-                    if prebuilt_lookup:
-                        mix_path = prebuilt_lookup.get((pi, float(snr)))
-                        if not mix_path:
-                            raise RuntimeError(
-                                f"prebuilt manifest'te (pair={pi}, snr={snr}) için mix yok"
-                            )
-                        noisy, _ = _load_cached(mix_path)
-                    else:
-                        noisy = mix_at_snr(clean, noise, snr)
+                    # Pre-built mix dosyasını diskten oku (manifest garantili).
+                    mix_path = prebuilt_lookup.get((pi, float(snr)))
+                    if not mix_path:
+                        raise RuntimeError(
+                            f"manifest'te (pair={pi}, snr={snr}) için mix yok"
+                        )
+                    noisy, _ = _load_cached(mix_path)
 
                     snr_tag = (
                         f"{int(snr):+d}dB" if float(snr).is_integer() else f"{snr:+.1f}dB"
