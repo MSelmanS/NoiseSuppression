@@ -159,6 +159,9 @@ Her benchmark çalıştırması kendi zaman damgalı klasörüne yazar — önce
 - [x] Otomatik hipotez testi (H1-H4) — `benchmark/hypothesis.py`
 - [x] Tek-dosya HTML rapor (embedded audio + spektrogram + heatmap) — `benchmark/html_report.py`
 - [x] Pipeline sıralaması kararı (Akış 1: önce denoise → sonra konuşmacı seçimi) — `pipeline/README.md`
+- [x] Pre-built mix üretici (`build_mixes.py`) — `input_data/{profile}/` altında manifest + wav
+- [x] `bench_synthetic` pre-built mix desteği (`--use-prebuilt auto/yes/no`)
+- [x] Profil arası mix yeniden kullanımı (kopya optimizasyonu — manifest'te `source` sütunu)
 
 ### Sıradaki
 - [ ] Baskın konuşmacı seçimi modülü (VAD + RMS) — **Pipeline sıralaması: Akış 1 (önce denoise)** kararlaştırıldı (Bölüm 4.4). Aday VAD'ler: Silero / WebRTC / saf enerji.

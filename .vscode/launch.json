@@ -2,6 +2,50 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "build_mixes (interactive profile)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.build_mixes",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "build_mixes (profile: s_smoke — fast)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.build_mixes",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--profile",
+                "s_smoke"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "build_mixes (profile: s_quick)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.build_mixes",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--profile",
+                "s_quick"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
             "name": "bench_synthetic (interactive — F5 default)",
             "type": "debugpy",
             "request": "launch",

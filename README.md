@@ -37,16 +37,37 @@ python -m scripts.download_data
 
 Detay ve lisanslar: [`data/README.md`](data/README.md).
 
-### 3. Smoke test (5 dakikadan kısa)
+### 3. Mix üretimi (pre-built, opsiyonel ama önerilir)
+
+```powershell
+python -m scripts.build_mixes --profile s_smoke
+```
+
+`input_data/s_smoke/` altında **clean × noise × SNR kombinasyonlarının tümünü**
+disk'e yazar (s_smoke için 56 mix). `manifest.csv` her dosyanın hangi clean +
+hangi noise + hangi SNR'da olduğunu kaydeder, achieved SNR'u doğrular.
+
+**Spot check (önerilir):** klasörü aç, 3-5 dosyayı rastgele dinle — gürültü
+hedef SNR'da düzgün karışmış mı, kırpılma yok mu emin ol.
+
+```powershell
+explorer input_data\s_smoke
+```
+
+> Daha büyük profil için: `python -m scripts.build_mixes --profile s_quick`
+> (20 clean × 7 noise × 5 SNR = 700 dosya, ~270 MB)
+
+### 4. Smoke test (5 dakikadan kısa)
 
 ```powershell
 python -m scripts.bench_synthetic --profile s_smoke
 ```
 
 Hızlı modellerle (spectral_subtraction, rnnoise, deepfilternet, metricgan_plus)
-küçük bir benchmark yapar. Her şey çalışıyor mu kontrol için.
+küçük bir benchmark yapar. Manifest varsa "pre-built mix kullanayım mı?" sorar
+(Enter = evet). Yoksa bellekte üretir (Adım 3'ü atladıysan otomatik fallback).
 
-### 4. Tam koşum — Senaryo S (kanonik)
+### 5. Tam koşum — Senaryo S (kanonik)
 
 ```powershell
 python -m scripts.bench_synthetic --profile s_quick
@@ -55,7 +76,7 @@ python -m scripts.bench_synthetic --profile s_quick
 20 temiz × 7 gürültü × 5 SNR × 3 tekrar = 2100 ölçüm/model × 7 model.
 CPU'da tahmini süre 30-60 dakika.
 
-### 5. Raporu açma
+### 6. Raporu açma
 
 ```powershell
 # Çıktı klasörünü bul
@@ -72,6 +93,10 @@ Rapor tek dosya HTML; e-mail'le paylaşılabilir, başka cihaza taşınınca da
 
 `.vscode/launch.json` hazır; **F5** veya Run panelinden konfigürasyon seç:
 
+- **build_mixes (interactive profile)** → Pre-built mix üretimi, profil sorar
+- **build_mixes (profile: s_smoke — fast)** → s_smoke mix'leri
+- **build_mixes (profile: s_quick)** → s_quick mix'leri
+- **bench_synthetic (interactive — F5 default)** → Profil + seçenek menüsü
 - **bench_synthetic (profile: s_quick — full sweep)** → Senaryo S
 - **bench_synthetic (profile: s_smoke — fast)** → Smoke test
 - **bench_synthetic (profile: m_medium — large run)** → 50 pair, saatler
@@ -80,6 +105,34 @@ Rapor tek dosya HTML; e-mail'le paylaşılabilir, başka cihaza taşınınca da
 
 Tüm konfigürasyonlar `.venv\Scripts\python.exe` interpreter'ını otomatik
 seçer ve `PYTHONPATH` doğru ayarlanır.
+
+## Mix doğrulama (spot check)
+
+`build_mixes` çalıştıktan sonra `input_data/{profile}/` klasörünü manuel
+incelemen önerilir. Dosya adlandırması doğrulamayı kolaylaştırır:
+
+```
+input_data/s_smoke/
+├── manifest.csv                                  # tüm mix'lerin metadata'sı
+├── en_spk5536_utt001__SCAFE__snr-05.wav         # SNR -5 (gürültü baskın)
+├── en_spk5536_utt001__SCAFE__snr00.wav          # SNR 0 (eşit)
+├── en_spk5536_utt001__SCAFE__snr05.wav          # SNR +5 (konuşma baskın)
+├── tr_spkanon0003_utt004__TCAR__snr10.wav       # araç gürültüsü, +10 dB
+└── ...
+```
+
+**Spot check listesi (3-5 dakika):**
+1. `en_..._snr-05.wav` ile `en_..._snr10.wav` aynı clean'i kullanarak dinle.
+   Gürültü seviyesi sayısal SNR'a uyuyor mu?
+2. Farklı sahnelerden (SCAFE vs TCAR vs NPARK) örnek dinle. Doğru gürültü
+   içeriği geldi mi?
+3. Hem `en_*` hem `tr_*` örneği dinle. Konuşmacı kimliği belli mi?
+4. `manifest.csv`'ye bak: `achieved_snr_db` ile `target_snr_db` arası fark
+   < 0.5 dB olmalı.
+
+Eğer dinleme sonunda mix'lerden tatmin olmadıysan parametre ayarı için
+[`scripts/profiles.py`](scripts/profiles.py) veya yeniden planlama için
+[`development_task.md`](development_task.md) güncellenir.
 
 ## Çıktı klasör yapısı (bench_synthetic)
 
