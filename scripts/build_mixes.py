@@ -26,6 +26,11 @@ import time
 from glob import glob
 from pathlib import Path
 
+# Direct çalıştırma için proje kökünü path'e ekle (python scripts/build_mixes.py).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import numpy as np
 
 from audio_io.file_io import load_audio, save_audio

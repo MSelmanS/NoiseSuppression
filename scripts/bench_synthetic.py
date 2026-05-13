@@ -17,6 +17,12 @@ import time
 from datetime import datetime
 from glob import glob
 
+# Direct çalıştırma (python scripts/bench_synthetic.py) için proje kökünü path'e ekle.
+# `python -m scripts.bench_synthetic` ile çağrılırsa zaten doğru.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 from audio_io.file_io import load_audio, save_audio
 from benchmark.mixer import extend_to_min_duration
 from benchmark.metrics import PeakRSSTracker, time_it, model_size_mb, param_count
@@ -272,8 +278,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Manifest yoksa `python -m scripts.build_mixes --profile X` ile üretilir.
     args = p.parse_args(argv)
 
-    # İnteraktif mod: konsoldan profil + seçenekleri sor, args üzerine yaz.
-    if args.interactive:
+    # İnteraktif mod: --interactive verildiyse VEYA profil belirtilmediyse,
+    # konsoldan profil + seçenekleri sor.
+    if args.interactive or args.profile is None:
         overrides = _interactive_setup()
         for key, value in overrides.items():
             setattr(args, key, value)
