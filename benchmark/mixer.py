@@ -21,6 +21,43 @@ def pad_or_trim(arr: np.ndarray, target_len: int) -> np.ndarray:
     return tiled[:target_len]
 
 
+def extend_to_min_duration(
+    audio: np.ndarray,
+    sr: int,
+    min_seconds: float,
+    strategy: str = "mirror",
+) -> np.ndarray:
+    """Sesi en az min_seconds uzunluğuna getir (zaten yeterliyse aynen döner).
+
+    Strateji:
+      "mirror" — audio + audio[::-1] + audio + ... (alternatif ileri/geri)
+                 Konuşmacı kimliği ve spektral içerik korunur, STOI/PESQ
+                 doğal akışa daha yakın hisseder.
+      "tile"   — audio + audio + ... (basit tekrar; sınırda dikiş duyulabilir
+                 ama metrikler için yeterli)
+
+    Çıktı uzunluğu tam olarak ceil(min_seconds * sr); ses zaten uzunsa
+    olduğu gibi döner (kırpılmaz).
+    """
+    target_samples = int(np.ceil(min_seconds * sr))
+    n = len(audio)
+    if n >= target_samples:
+        return audio
+
+    parts = []
+    total = 0
+    flip = False
+    while total < target_samples:
+        if strategy == "mirror":
+            parts.append(audio[::-1] if flip else audio)
+            flip = not flip
+        else:  # tile
+            parts.append(audio)
+        total += n
+
+    return np.concatenate(parts)[:target_samples].astype(audio.dtype)
+
+
 def _rms(x: np.ndarray) -> float:
     """Sinyalin RMS'i. Çok küçük bir floor ekliyoruz ki bölmede patlamasın."""
     return float(np.sqrt(np.mean(x.astype(np.float64) ** 2) + 1e-12))

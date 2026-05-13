@@ -19,7 +19,7 @@ from datetime import datetime
 from glob import glob
 
 from audio_io.file_io import load_audio, save_audio
-from benchmark.mixer import mix_at_snr
+from benchmark.mixer import mix_at_snr, extend_to_min_duration
 from benchmark.metrics import PeakRSSTracker, time_it, model_size_mb, param_count
 from benchmark.runner import run_processing_only
 from benchmark.report import (
@@ -34,6 +34,69 @@ from benchmark.anomaly import detect_anomalies, summarize_anomalies
 from benchmark.html_report import generate_html_report
 from scripts._model_registry import resolve_models, MODEL_REGISTRY
 from scripts.profiles import PROFILES, get_profile, estimate_measurements
+
+
+def _interactive_setup() -> dict:
+    """Konsoldan interaktif konfigürasyon iste.
+
+    F5 / Run button'dan başlatıldığında kullanıcı bir profil seçer ve
+    save-strategy / HTML gibi yan seçenekleri belirler. Dönüş dict olarak
+    argparse Namespace'e merge edilir.
+    """
+    print("=" * 50)
+    print("  Denoiser Benchmark — İnteraktif Konfigürasyon")
+    print("=" * 50)
+    print()
+    print("Mevcut profiller:")
+    names = list(PROFILES.keys())
+    for i, name in enumerate(names, start=1):
+        desc = PROFILES[name].get("description", "")
+        print(f"  [{i}] {name:<10}  {desc}")
+    print(f"  [{len(names) + 1}] custom    Tüm parametreleri manuel gir")
+    print()
+
+    def _ask(prompt: str, default: str) -> str:
+        try:
+            ans = input(f"{prompt} [{default}]: ").strip()
+        except EOFError:
+            ans = ""
+        return ans if ans else default
+
+    # Profil seçimi
+    choice = _ask(f"Profil seçimi [1-{len(names) + 1}]", "1")
+    overrides: dict = {}
+    try:
+        idx = int(choice) - 1
+    except ValueError:
+        idx = 0
+    if 0 <= idx < len(names):
+        overrides["profile"] = names[idx]
+    else:
+        overrides["profile"] = None  # custom
+
+    if overrides["profile"] is None:
+        # Custom: tüm önemli parametreleri sor
+        snrs = _ask("SNR seviyeleri (boşlukla)", "-5 0 5 10 15")
+        overrides["snrs"] = [float(x) for x in snrs.split()]
+        overrides["max_pairs"] = int(_ask("max-pairs", "20"))
+        overrides["n_repeats"] = int(_ask("n-repeats", "3"))
+        overrides["models"] = _ask("models", "all")
+    else:
+        # Profil seçildi; sadece nadiren değiştirilen seçenekleri sor
+        pass
+
+    overrides["save_strategy"] = _ask(
+        "save-strategy [all/samples/none]", "samples"
+    )
+    html_choice = _ask("HTML rapor üretilsin mi? [Y/n]", "Y").lower()
+    overrides["no_html_report"] = html_choice.startswith("n")
+
+    print()
+    print(f"Başlatılıyor: profile={overrides.get('profile') or 'custom'}, "
+          f"save-strategy={overrides['save_strategy']}, "
+          f"html={'evet' if not overrides['no_html_report'] else 'hayır'}")
+    print()
+    return overrides
 
 
 def _scene_from_path(noise_path: str) -> str:
@@ -66,6 +129,11 @@ _BUILTIN_DEFAULTS: dict = {
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Sentetik karışım (clean+noise) üzerinde benchmark + kalite metrikleri.",
+    )
+    p.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Başlangıçta menüden profil ve seçenekleri sor (F5 / Run button için).",
     )
     # --profile profile dict'inden değerleri okur; aşağıdaki --xxx None default'ları
     # "kullanıcı bunu verdi mi?" ayrımı için kullanılır.
@@ -120,9 +188,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=3.5,
         help=(
-            "Clean wav minimum süresi (saniye). Bu eşikten kısa dosyalar atılır. "
-            "STOI yaklaşık 3 sn'den kısa girdide 1e-5 fallback'i kullanır; "
-            "STOI'nin anlamlı olmasını istiyorsak burayı yüksek tutmak gerek."
+            "Clean wav minimum süresi (saniye). Bu eşikten kısa dosyalar için "
+            "--short-clean-strategy davranışı uygulanır. STOI yaklaşık 3 sn'den "
+            "kısa girdide 1e-5 fallback'i kullanır; STOI'nin anlamlı olmasını "
+            "istiyorsak burayı yüksek tutmak gerek."
+        ),
+    )
+    p.add_argument(
+        "--short-clean-strategy",
+        choices=["pad", "skip"],
+        default="pad",
+        help=(
+            "Kısa clean dosyaları nasıl ele alalım:\n"
+            "  pad  — aynalama ile min süreye uzat (data kaybı yok, varsayılan)\n"
+            "  skip — pool'dan at"
         ),
     )
     p.add_argument(
@@ -152,6 +231,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="HTML raporu üretme (varsayılan: üret). save-strategy=none ise yine atlanır.",
     )
     args = p.parse_args(argv)
+
+    # İnteraktif mod: konsoldan profil + seçenekleri sor, args üzerine yaz.
+    if args.interactive:
+        overrides = _interactive_setup()
+        for key, value in overrides.items():
+            setattr(args, key, value)
 
     # Profile + CLI override birleştir.
     # --profile verilmişse o profile başlat, yoksa _BUILTIN_DEFAULTS'a düş.
@@ -241,23 +326,43 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Hata: {args.noise_dir} içinde .wav yok.", file=sys.stderr)
         return 2
 
-    # Çok kısa clean wav'lar STOI'yi düşürür (1e-5 fallback). Erken filtrele.
+    # Çok kısa clean wav'lar STOI'yi düşürür (1e-5 fallback).
+    # pad: aynalama ile uzat, skip: pool'dan at.
     if args.min_clean_duration > 0:
-        clean_paths, skipped = _filter_by_duration(clean_paths, args.min_clean_duration)
-        if skipped:
-            print(
-                f"min-clean-duration={args.min_clean_duration:.1f}s eşiğinden "
-                f"{len(skipped)} clean dosyası atlandı:"
-            )
-            for p in skipped:
-                print(f"  - {p}")
-        if not clean_paths:
-            print(
-                f"Hata: --min-clean-duration={args.min_clean_duration:.1f}s sonrası "
-                "hiç clean dosyası kalmadı.",
-                file=sys.stderr,
-            )
-            return 2
+        if args.short_clean_strategy == "skip":
+            clean_paths, skipped = _filter_by_duration(clean_paths, args.min_clean_duration)
+            if skipped:
+                print(
+                    f"min-clean-duration={args.min_clean_duration:.1f}s eşiğinden "
+                    f"{len(skipped)} clean dosyası atlandı:"
+                )
+                for p in skipped:
+                    print(f"  - {p}")
+            if not clean_paths:
+                print(
+                    f"Hata: --min-clean-duration={args.min_clean_duration:.1f}s sonrası "
+                    "hiç clean dosyası kalmadı.",
+                    file=sys.stderr,
+                )
+                return 2
+        else:  # pad
+            # Sadece hangi dosyalar pad edilecek bildiriyoruz; gerçek uzatma
+            # _load_cached çağrısında yapılır (download yerine in-memory).
+            from soundfile import info as sf_info
+            short_files = []
+            for p in clean_paths:
+                try:
+                    if sf_info(p).duration < args.min_clean_duration:
+                        short_files.append(p)
+                except Exception:
+                    pass
+            if short_files:
+                print(
+                    f"min-clean-duration={args.min_clean_duration:.1f}s altındaki "
+                    f"{len(short_files)} dosya aynalama ile uzatılacak:"
+                )
+                for p in short_files:
+                    print(f"  - {p}")
 
     try:
         model_classes = resolve_models(args.models)
@@ -275,10 +380,23 @@ def main(argv: list[str] | None = None) -> int:
     # Tüm clean+noise ses dosyalarını önceden yükle (RAM tutarsa); aynı dosya
     # tekrar tekrar diskten okunmasın.
     cache: dict[str, "tuple"] = {}
+    clean_paths_set = set(clean_paths)
+    pad_active = (
+        args.min_clean_duration > 0 and args.short_clean_strategy == "pad"
+    )
 
     def _load_cached(path: str):
         if path not in cache:
-            cache[path] = load_audio(path)
+            audio, sr = load_audio(path)
+            # Clean ve kısaysa uzat. Noise için pad uygulanmaz; mix_at_snr'da
+            # noise zaten clean uzunluğuna pad/trim ediliyor.
+            if pad_active and path in clean_paths_set:
+                duration = len(audio) / sr
+                if duration < args.min_clean_duration:
+                    audio = extend_to_min_duration(
+                        audio, sr, args.min_clean_duration, strategy="mirror"
+                    )
+            cache[path] = (audio, sr)
         return cache[path]
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
