@@ -116,6 +116,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--seed", type=int, default=42, help="Çift örnekleme tohumu.")
     p.add_argument(
+        "--min-clean-duration",
+        type=float,
+        default=3.5,
+        help=(
+            "Clean wav minimum süresi (saniye). Bu eşikten kısa dosyalar atılır. "
+            "STOI yaklaşık 3 sn'den kısa girdide 1e-5 fallback'i kullanır; "
+            "STOI'nin anlamlı olmasını istiyorsak burayı yüksek tutmak gerek."
+        ),
+    )
+    p.add_argument(
         "--no-warmup",
         action="store_true",
         help="Her ölçüm önce yapılan ısınma çağrısını atla.",
@@ -182,6 +192,30 @@ def _list_wavs(d: str) -> list[str]:
     return paths
 
 
+def _filter_by_duration(paths: list[str], min_seconds: float) -> tuple[list[str], list[str]]:
+    """Wav listesini süresine göre ayır.
+
+    pystoi STOI hesaplaması için ~3 s'lik konuşma şart; aksi halde
+    'Not enough STFT frames' uyarısı verir ve 1e-5 döndürür. Kısa dosyaları
+    erkenden eleriz, ölçümler temiz olur.
+
+    Returns: (kept, skipped) — yan yana kalan ve atılan dosyalar.
+    """
+    import soundfile as sf
+    kept: list[str] = []
+    skipped: list[str] = []
+    for p in paths:
+        try:
+            if sf.info(p).duration >= min_seconds:
+                kept.append(p)
+            else:
+                skipped.append(p)
+        except Exception:
+            # Format hatası vs.; sessizce at
+            skipped.append(p)
+    return kept, skipped
+
+
 def _sample_pairs(
     clean_paths: list[str],
     noise_paths: list[str],
@@ -206,6 +240,24 @@ def main(argv: list[str] | None = None) -> int:
     if not noise_paths:
         print(f"Hata: {args.noise_dir} içinde .wav yok.", file=sys.stderr)
         return 2
+
+    # Çok kısa clean wav'lar STOI'yi düşürür (1e-5 fallback). Erken filtrele.
+    if args.min_clean_duration > 0:
+        clean_paths, skipped = _filter_by_duration(clean_paths, args.min_clean_duration)
+        if skipped:
+            print(
+                f"min-clean-duration={args.min_clean_duration:.1f}s eşiğinden "
+                f"{len(skipped)} clean dosyası atlandı:"
+            )
+            for p in skipped:
+                print(f"  - {p}")
+        if not clean_paths:
+            print(
+                f"Hata: --min-clean-duration={args.min_clean_duration:.1f}s sonrası "
+                "hiç clean dosyası kalmadı.",
+                file=sys.stderr,
+            )
+            return 2
 
     try:
         model_classes = resolve_models(args.models)
