@@ -18,6 +18,15 @@ class MetricGANDenoiser(BaseDenoiser):
         self.model = None
 
     def load(self):
+        # SpeechBrain HuggingFace'ten custom.py'yi her açılışta yeniden çekiyor;
+        # certifi'nin yerleşik CA bundle'ı kurumsal sertifikaları kapsamadığında
+        # SSL hatası fırlıyor. truststore'u OS cert store'una bağlarsak çözülür.
+        try:
+            import truststore  # type: ignore
+            truststore.inject_into_ssl()
+        except ImportError:
+            pass
+
         # Lazy import — SpeechBrain ağır bir paket
         # SpeechBrain 0.5.x'te bu sınıf speechbrain.pretrained altında
         # (1.x'te speechbrain.inference.enhancement olarak yeniden adlandırıldı)
