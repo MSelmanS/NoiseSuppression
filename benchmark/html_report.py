@@ -11,8 +11,10 @@ Bölümler (sırayla):
   4. Sahne × SNR ısı haritaları
   5. Detay tablosu — model × sahne × SNR ortalama (per-SNR XLSX'in HTML eşleniği)
   6. Dinleme galerisi — samples klasöründeki wav + spektrogram
-  7. Anomaliler — anomalies.csv tablo halinde
-  8. Grafikler — plot_*.png'lerin embedded versiyonu
+  7. Grafikler — plot_*.png'lerin embedded versiyonu
+
+Not: Anomali tespiti hâlâ çalışıyor ve anomalies.csv'ye yazılıyor; sadece
+HTML raporda gösterilmiyor (kullanıcı isteği).
 """
 
 from __future__ import annotations
@@ -318,9 +320,10 @@ def _section_detail_table(df: pd.DataFrame) -> str:
     return f"""
 <h2 id="detail">5. Detay Tablo — Tüm Metrikler (Model × Sahne × SNR ortalama)</h2>
 <p class="meta">Her metrik için ayrı tablo. Hücre rengi: yeşil = o metrik için iyi,
-kırmızı = kötü. <b>Sayısal kanıt + kulak testi birlikte değerlendirilmeli</b>;
-özellikle PESQ yüksek + HF Ratio düşük olan satırlar Anomaliler bölümünde de
-"over_suppression" olarak işaretleniyor.</p>
+kırmızı = kötü. <b>Sayısal kanıt + kulak testi birlikte değerlendirilmeli</b> —
+örneğin PESQ yüksek ama HF Ratio düşük olan satırlar "kulağa iyi gelen ama
+yüksek frekansı kesilmiş" çıktıyı işaret eder. Otomatik anomali tespiti ayrıca
+<code>anomalies.csv</code> dosyasına yazılır (HTML'e dahil edilmiyor).</p>
 {''.join(blocks)}
 """
 
@@ -454,36 +457,6 @@ def _lookup_metrics_for_sample(df: pd.DataFrame, model: str, sample_key: str) ->
     return " | ".join(parts)
 
 
-def _section_anomalies(out_dir: str) -> str:
-    path = os.path.join(out_dir, "anomalies.csv")
-    if not os.path.isfile(path):
-        return "<h2 id='anomalies'>7. Anomaliler</h2><p>Anomali yakalanmadı.</p>"
-    try:
-        an = pd.read_csv(path, encoding="utf-8")
-    except Exception:
-        return "<h2 id='anomalies'>7. Anomaliler</h2><p>anomalies.csv okunamadı.</p>"
-    if len(an) == 0:
-        return "<h2 id='anomalies'>7. Anomaliler</h2><p>Anomali yakalanmadı.</p>"
-
-    cols = ["model", "scene", "snr_db", "type", "severity", "details"]
-    cols = [c for c in cols if c in an.columns]
-    rows = []
-    for _, r in an.iterrows():
-        sev = str(r.get("severity", "")).lower()
-        css_cls = f"anomaly-{sev}" if sev in ("high", "medium", "low") else ""
-        cells = "".join(f"<td>{escape(str(r.get(c, '')))}</td>" for c in cols)
-        rows.append(f'<tr class="{css_cls}">{cells}</tr>')
-
-    headers = "".join(f"<th>{escape(c)}</th>" for c in cols)
-    return f"""
-<h2 id="anomalies">7. Anomaliler ({len(an)})</h2>
-<table>
-  <tr>{headers}</tr>
-  {''.join(rows)}
-</table>
-"""
-
-
 def _section_plots(out_dir: str) -> str:
     plots = [
         ("plot_pesq_vs_snr.png", "PESQ vs SNR"),
@@ -506,7 +479,7 @@ def _section_plots(out_dir: str) -> str:
     if not blocks:
         return ""
     return f"""
-<h2 id="plots">8. Grafikler</h2>
+<h2 id="plots">7. Grafikler</h2>
 {''.join(blocks)}
 """
 
@@ -520,8 +493,7 @@ def _toc() -> str:
   <a href="#heatmap">4. Heatmap</a> &middot;
   <a href="#detail">5. Detay</a> &middot;
   <a href="#gallery">6. Galeri</a> &middot;
-  <a href="#anomalies">7. Anomali</a> &middot;
-  <a href="#plots">8. Grafikler</a>
+  <a href="#plots">7. Grafikler</a>
 </nav>
 """
 
@@ -551,7 +523,6 @@ def generate_html_report(
         _section_heatmaps(df, "pesq", "PESQ"),
         _section_detail_table(df),
         _section_gallery(out_dir, df),
-        _section_anomalies(out_dir),
         _section_plots(out_dir),
         f"<hr><p class='meta'>Generated: {datetime.now().isoformat(timespec='seconds')}</p>",
         "</body></html>",
